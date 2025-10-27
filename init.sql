@@ -103,8 +103,6 @@ INSERT INTO projects (
  '2025-12-09'  -- plan_delivery_accessories
 );
 
-\echo '✅ Tabel projects berhasil dibuat dan diisi data dummy.'
-
 INSERT INTO users (username, password, role) VALUES
 ('admin', 'adminpass', 'Admin'),
 ('pic_user', 'picpass', 'PIC'),
@@ -118,5 +116,4 @@ INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
 ('vendor_global', 'globalpass', 'External/Vendor', 'Globalindo', 'Busbar'),
 ('vendor_presisi', 'presisipass', 'External/Vendor', 'Presisi', 'Busbar');
 
-\echo '✅ Tabel users berhasil dibuat dan diisi data dummy.'
-\echo '✅ Inisialisasi database selesai.'
+SELECT '✅ Tabel projects berhasil dibuat dan diisi data dummy.';
