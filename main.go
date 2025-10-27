@@ -180,7 +180,8 @@ func main() {
         mustGetEnv("POSTGRES_PORT"),
     )
 
-    db, err := sql.Open("postgres", connStr)
+    var err error
+    db, err = sql.Open("postgres", connStr) 
     if err != nil {
         log.Fatal("❌ Failed to open database connection:", err)
     }
