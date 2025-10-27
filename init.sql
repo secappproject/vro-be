@@ -1,5 +1,6 @@
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS vendors;
 DROP TYPE IF EXISTS project_category;
 DROP TYPE IF EXISTS busbar_status;
 DROP TYPE IF EXISTS tracking_status;
@@ -8,6 +9,14 @@ DROP TYPE IF EXISTS user_role;
 CREATE TYPE project_category AS ENUM ('PIX', 'MCZ');
 CREATE TYPE busbar_status AS ENUM ('Punching/Bending', 'Plating', 'Heatshrink', 'Done');
 CREATE TYPE user_role AS ENUM ('Admin', 'PIC', 'Production Planning', 'External/Vendor');
+
+CREATE TABLE vendors (
+    id SERIAL PRIMARY KEY,
+    company_name VARCHAR(100) UNIQUE NOT NULL,
+    vendor_type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -58,49 +67,62 @@ BEFORE UPDATE ON projects
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_vendors_updated_at
+BEFORE UPDATE ON vendors
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+INSERT INTO vendors (company_name, vendor_type) VALUES
+('ABACUS', 'Panel'),
+('UMEDA', 'Panel'),
+('GAA', 'Panel'),
+('Triakarya', 'Busbar'),
+('Globalindo', 'Busbar'),
+('Presisi', 'Busbar');
+
 INSERT INTO projects (
     project_name, wbs, category, plan_start, quantity, vendor_panel, vendor_busbar,
     panel_progress, status_busbar,
-    fat_start, -- FAT Start dummy
-    plan_delivery_basic_kit_panel, -- Otomatis H+7 dari plan_start
-    plan_delivery_basic_kit_busbar, -- Otomatis H+7 dari plan_start
-    plan_delivery_accessories_panel, -- Otomatis H+7 dari fat_start
-    plan_delivery_accessories_busbar -- Otomatis H+7 dari fat_start
+    fat_start,
+    plan_delivery_basic_kit_panel,
+    plan_delivery_basic_kit_busbar,
+    plan_delivery_accessories_panel,
+    plan_delivery_accessories_busbar
 ) VALUES
 ('Project Alpha', 'WBS-001', 'PIX', '2025-11-01', 10, 'ABACUS', 'Triakarya', 0, 'Punching/Bending',
- '2025-11-15', -- FAT Start dummy (plan_start + 14 hari)
- '2025-11-08', -- plan_delivery_basic_kit (plan_start + 7 hari)
- '2025-11-08', -- plan_delivery_basic_kit (plan_start + 7 hari)
- '2025-11-22', -- plan_delivery_accessories (fat_start + 7 hari)
- '2025-11-22'  -- plan_delivery_accessories (fat_start + 7 hari)
+ '2025-11-15',
+ '2025-11-08',
+ '2025-11-08',
+ '2025-11-22',
+ '2025-11-22'
 ),
 ('Project Beta', 'WBS-002', 'MCZ', '2025-11-05', 5, 'UMEDA', 'Globalindo', 25, 'Plating',
- '2025-11-19', -- FAT Start dummy
- '2025-11-12', -- plan_delivery_basic_kit
- '2025-11-12', -- plan_delivery_basic_kit
- '2025-11-26', -- plan_delivery_accessories
- '2025-11-26'  -- plan_delivery_accessories
+ '2025-11-19',
+ '2025-11-12',
+ '2025-11-12',
+ '2025-11-26',
+ '2025-11-26'
 ),
 ('Project Gamma', 'WBS-003', 'PIX', '2025-11-10', 8, 'GAA', 'Presisi', 0, 'Punching/Bending',
- '2025-11-24', -- FAT Start dummy
- '2025-11-17', -- plan_delivery_basic_kit
- '2025-11-17', -- plan_delivery_basic_kit
- '2025-12-01', -- plan_delivery_accessories
- '2025-12-01'  -- plan_delivery_accessories
+ '2025-11-24',
+ '2025-11-17',
+ '2025-11-17',
+ '2025-12-01',
+ '2025-12-01'
 ),
 ('Project Delta', 'WBS-004', 'MCZ', '2025-11-12', 12, 'ABACUS', 'Globalindo', 50, 'Heatshrink',
- '2025-11-26', -- FAT Start dummy
- '2025-11-19', -- plan_delivery_basic_kit
- '2025-11-19', -- plan_delivery_basic_kit
- '2025-12-03', -- plan_delivery_accessories
- '2025-12-03'  -- plan_delivery_accessories
+ '2025-11-26',
+ '2025-11-19',
+ '2025-11-19',
+ '2025-12-03',
+ '2025-12-03'
 ),
 ('Project Epsilon', 'WBS-005', 'PIX', '2025-11-18', 7, 'UMEDA', 'Triakarya', 0, 'Punching/Bending',
- '2025-12-02', -- FAT Start dummy
- '2025-11-25', -- plan_delivery_basic_kit
- '2025-11-25', -- plan_delivery_basic_kit
- '2025-12-09', -- plan_delivery_accessories
- '2025-12-09'  -- plan_delivery_accessories
+ '2025-12-02',
+ '2025-11-25',
+ '2025-11-25',
+ '2025-12-09',
+ '2025-12-09'
 );
 
 INSERT INTO users (username, password, role) VALUES
@@ -116,4 +138,4 @@ INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
 ('vendor_global', 'globalpass', 'External/Vendor', 'Globalindo', 'Busbar'),
 ('vendor_presisi', 'presisipass', 'External/Vendor', 'Presisi', 'Busbar');
 
-SELECT '✅ Tabel projects berhasil dibuat dan diisi data dummy.';
+SELECT '✅ Tabel projects, users, dan vendors berhasil dibuat dan diisi data dummy.';

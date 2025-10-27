@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-    _ "github.com/lib/pq"
-    "github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/joho/godotenv"
 )
 
 func mustGetEnv(key string) string {
@@ -48,11 +48,11 @@ func (jd *JSONDate) UnmarshalJSON(data []byte) error {
 }
 
 func (jd JSONDate) MarshalJSON() ([]byte, error) {
-	t := time.Time(jd)
-	if t.IsZero() {
-		return json.Marshal(nil)
-	}
-	return json.Marshal(t.Format("2006-01-02"))
+    t := time.Time(jd)
+    if t.IsZero() {
+        return json.Marshal(nil)
+    }
+    return json.Marshal(t.Format("2006-01-02"))
 }
 
 func (jd JSONDate) Value() (driver.Value, error) {
@@ -60,73 +60,73 @@ func (jd JSONDate) Value() (driver.Value, error) {
     if t.IsZero() {
         return nil, nil
     }
-	return t, nil
+    return t, nil
 }
 
 func (jd *JSONDate) Scan(value interface{}) error {
-	if value == nil {
-		*jd = JSONDate(time.Time{})
-		return nil
-	}
-	if t, ok := value.(time.Time); ok {
-		*jd = JSONDate(t)
-		return nil
-	}
-	return fmt.Errorf("cannot scan %T into JSONDate", value)
+    if value == nil {
+        *jd = JSONDate(time.Time{})
+        return nil
+    }
+    if t, ok := value.(time.Time); ok {
+        *jd = JSONDate(t)
+        return nil
+    }
+    return fmt.Errorf("cannot scan %T into JSONDate", value)
 }
 
 type JSONNullTime struct {
-	sql.NullTime
+    sql.NullTime
 }
 
 func (v *JSONNullTime) UnmarshalJSON(data []byte) error {
-	var dateStr *string
-	if err := json.Unmarshal(data, &dateStr); err != nil {
-		return err
-	}
-	if dateStr == nil || *dateStr == "" {
-		v.Valid = false
-		return nil
-	}
-	t, err := time.Parse("2006-01-02", *dateStr)
-	if err != nil {
+    var dateStr *string
+    if err := json.Unmarshal(data, &dateStr); err != nil {
+        return err
+    }
+    if dateStr == nil || *dateStr == "" {
+        v.Valid = false
+        return nil
+    }
+    t, err := time.Parse("2006-01-02", *dateStr)
+    if err != nil {
          t, err = time.Parse(time.RFC3339, *dateStr)
          if err != nil {
-		    return fmt.Errorf("cannot parse %q as YYYY-MM-DD or RFC3339: %w", *dateStr, err)
+            return fmt.Errorf("cannot parse %q as YYYY-MM-DD or RFC3339: %w", *dateStr, err)
          }
-	}
-	v.Valid = true
-	v.Time = t
-	return nil
+    }
+    v.Valid = true
+    v.Time = t
+    return nil
 }
 
 func (v JSONNullTime) MarshalJSON() ([]byte, error) {
-	if !v.Valid {
-		return json.Marshal(nil)
-	}
-	return json.Marshal(v.Time.Format("2006-01-02"))
+    if !v.Valid {
+        return json.Marshal(nil)
+    }
+    return json.Marshal(v.Time.Format("2006-01-02"))
 }
 
 type User struct {
-	ID          int            `json:"id"`
-	Username    string         `json:"username"`
-	Password    string         `json:"-"`
-	Role        string         `json:"role"`
-	CompanyName sql.NullString `json:"companyName"`
-	VendorType  sql.NullString `json:"vendorType"` 
+    ID          int            `json:"id"`
+    Username    string         `json:"username"`
+    Password    string         `json:"-"`
+    Role        string         `json:"role"`
+    CompanyName sql.NullString `json:"companyName"`
+    VendorType  sql.NullString `json:"vendorType"` 
 }
 
 type UserRequest struct {
-	Username    string         `json:"username" binding:"required"`
-	Password    string         `json:"password,omitempty"`
-	Role        string         `json:"role" binding:"required"`
-	CompanyName sql.NullString `json:"companyName"`
-	VendorType  sql.NullString `json:"vendorType"`
+    Username    string         `json:"username" binding:"required"`
+    Password    string         `json:"password,omitempty"`
+    Role        string         `json:"role" binding:"required"`
+    CompanyName sql.NullString `json:"companyName"`
+    VendorType  sql.NullString `json:"vendorType"`
 }
 
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+    Username string `json:"username" binding:"required"`
+    Password string `json:"password" binding:"required"`
 }
 
 type Project struct {
@@ -152,6 +152,16 @@ type Project struct {
     ActualDeliveryAccessoriesPanel JSONNullTime `json:"actualDeliveryAccessoriesPanel"`
     ActualDeliveryAccessoriesBusbar JSONNullTime `json:"actualDeliveryAccessoriesBusbar"`
 }
+
+// ++ STRUCT BARU ++
+type Vendor struct {
+    ID          int       `json:"id"`
+    CompanyName string    `json:"companyName" binding:"required"`
+    VendorType  string    `json:"vendorType" binding:"required"`
+    CreatedAt   time.Time `json:"createdAt"`
+    UpdatedAt   time.Time `json:"updatedAt"`
+}
+// ++ BATAS STRUCT BARU ++
 
 type DashboardData struct {
     TotalProjects   int            `json:"totalProjects"`
@@ -212,43 +222,53 @@ func main() {
             fmt.Println("Database initialized.")
         }
     }
-	router := gin.Default()
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"*"}
-	config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "PUT"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization", "X-User-Role"}
-	router.Use(cors.New(config))
-	api := router.Group("/api")
-	{
-		api.POST("/login", loginUser)
+    router := gin.Default()
+    config := cors.DefaultConfig()
+    config.AllowOrigins = []string{"*"}
+    config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "PUT"}
+    config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization", "X-User-Role"}
+    router.Use(cors.New(config))
+    api := router.Group("/api")
+    {
+        api.POST("/login", loginUser)
 
-		projects := api.Group("/projects")
-		projects.Use(AuthMiddleware())
+        projects := api.Group("/projects")
+        projects.Use(AuthMiddleware())
 
-		projects.POST("/", createProject)
-		projects.POST("/bulk", createBulkProjects)
-		projects.GET("/", getProjects)
-		projects.GET("/:id", getProjectByID)
-		projects.PUT("/:id", updateProject)
-		projects.DELETE("/:id", deleteProject)
-		projects.PATCH("/:id/start-panel-delivery", startPanelDelivery)
-		projects.PATCH("/:id/start-accessories-delivery", startAccessoriesDelivery)
+        projects.POST("/", createProject)
+        projects.POST("/bulk", createBulkProjects)
+        projects.GET("/", getProjects)
+        projects.GET("/:id", getProjectByID)
+        projects.PUT("/:id", updateProject)
+        projects.DELETE("/:id", deleteProject)
+        projects.PATCH("/:id/start-panel-delivery", startPanelDelivery)
+        projects.PATCH("/:id/start-accessories-delivery", startAccessoriesDelivery)
 
-		api.GET("/dashboard", getDashboardData)
-		
-		api.GET("/companies", AuthMiddleware(), getCompanies)
+        api.GET("/dashboard", getDashboardData)
+        
+        api.GET("/companies", AuthMiddleware(), getCompanies)
         api.GET("/vendor-types", AuthMiddleware(), getVendorTypes)
 
-		users := api.Group("/users")
-		users.Use(AuthMiddleware())    
-		users.Use(AdminAuthMiddleware())
-		{
-			users.GET("/", getUsers)
-			users.POST("/", createUser)
-			users.PUT("/:id", updateUser)
-			users.DELETE("/:id", deleteUser)
-		}
-	}
+        users := api.Group("/users")
+        users.Use(AuthMiddleware())    
+        users.Use(AdminAuthMiddleware())
+        {
+            users.GET("/", getUsers)
+            users.POST("/", createUser)
+            users.PUT("/:id", updateUser)
+            users.DELETE("/:id", deleteUser)
+        }
+
+        vendors := api.Group("/vendors")
+        vendors.Use(AuthMiddleware())
+        vendors.Use(AdminAuthMiddleware())
+        {
+            vendors.GET("/", getVendors)
+            vendors.POST("/", createVendor)
+            vendors.PUT("/:id", updateVendor)
+            vendors.DELETE("/:id", deleteVendor)
+        }
+    }
     router.GET("/", func(c *gin.Context) {
         c.JSON(200, gin.H{"status": "API running"})
     })
@@ -266,172 +286,267 @@ func main() {
 }
 
 func loginUser(c *gin.Context) {
-	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Username dan password dibutuhkan"})
-		return
-	}
+    var req LoginRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Username dan password dibutuhkan"})
+        return
+    }
 
-	var user User
-	err := db.QueryRow(
-		"SELECT id, username, password, role, company_name, vendor_type FROM users WHERE username = $1",
-		req.Username,
-	).Scan(&user.ID, &user.Username, &user.Password, &user.Role, &user.CompanyName, &user.VendorType) 
+    var user User
+    err := db.QueryRow(
+        "SELECT id, username, password, role, company_name, vendor_type FROM users WHERE username = $1",
+        req.Username,
+    ).Scan(&user.ID, &user.Username, &user.Password, &user.Role, &user.CompanyName, &user.VendorType) 
 
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Username atau password salah"})
-			return
-		}
-		log.Printf("Error querying user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal login"})
-		return
-	}
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Username atau password salah"})
+            return
+        }
+        log.Printf("Error querying user: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal login"})
+        return
+    }
 
-	if user.Password != req.Password {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Username atau password salah"})
-		return
-	}
+    if user.Password != req.Password {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Username atau password salah"})
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{
-		"username":    user.Username,
-		"role":        user.Role,
-		"companyName": user.CompanyName.String,
-		"vendorType":  user.VendorType.String,
-	})
+    c.JSON(http.StatusOK, gin.H{
+        "username":    user.Username,
+        "role":        user.Role,
+        "companyName": user.CompanyName.String,
+        "vendorType":  user.VendorType.String,
+    })
 }
 
 func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role := c.GetHeader("X-User-Role")
-		if role == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Header X-User-Role dibutuhkan"})
-			return
-		}
-		c.Next()
-	}
+    return func(c *gin.Context) {
+        role := c.GetHeader("X-User-Role")
+        if role == "" {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Header X-User-Role dibutuhkan"})
+            return
+        }
+        c.Next()
+    }
 }
 
 func AdminAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role := c.GetHeader("X-User-Role")
-		if role != "Admin" && role != "admin" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Admin yang diizinkan"})
-			return
-		}
-		c.Next()
-	}
+    return func(c *gin.Context) {
+        role := c.GetHeader("X-User-Role")
+        if role != "Admin" && role != "admin" {
+            c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Admin yang diizinkan"})
+            return
+        }
+        c.Next()
+    }
 }
 
 func getUsers(c *gin.Context) {
-	rows, err := db.Query("SELECT id, username, role, company_name, vendor_type FROM users ORDER BY username")
-	if err != nil {
-		log.Printf("Error querying users: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data pengguna"})
-		return
-	}
-	defer rows.Close()
+    rows, err := db.Query("SELECT id, username, role, company_name, vendor_type FROM users ORDER BY username")
+    if err != nil {
+        log.Printf("Error querying users: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data pengguna"})
+        return
+    }
+    defer rows.Close()
 
-	users := make([]User, 0)
-	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CompanyName, &u.VendorType); err != nil {
-			log.Printf("Error scanning user: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data pengguna"})
-			return
-		}
-		users = append(users, u)
-	}
+    users := make([]User, 0)
+    for rows.Next() {
+        var u User
+        if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CompanyName, &u.VendorType); err != nil {
+            log.Printf("Error scanning user: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data pengguna"})
+            return
+        }
+        users = append(users, u)
+    }
 
-	c.JSON(http.StatusOK, users)
+    c.JSON(http.StatusOK, users)
 }
 
 func createUser(c *gin.Context) {
-	var req UserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-		return
-	}
+    var req UserRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
 
-	if req.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Password dibutuhkan untuk pengguna baru"})
-		return
-	}
+    if req.Password == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Password dibutuhkan untuk pengguna baru"})
+        return
+    }
 
-	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
-		return
-	}
+    if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
+        return
+    }
 
-	var newID int
-	err := db.QueryRow(
-		`INSERT INTO users (username, password, role, company_name, vendor_type)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id`,
-		req.Username, req.Password, req.Role, req.CompanyName, req.VendorType,
-	).Scan(&newID)
+    var newID int
+    err := db.QueryRow(
+        `INSERT INTO users (username, password, role, company_name, vendor_type)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        req.Username, req.Password, req.Role, req.CompanyName, req.VendorType,
+    ).Scan(&newID)
 
-	if err != nil {
-		log.Printf("Error creating user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat pengguna: " + err.Error()})
-		return
-	}
+    if err != nil {
+        log.Printf("Error creating user: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat pengguna: " + err.Error()})
+        return
+    }
+    
+    var newUser User
+    err = db.QueryRow(
+        "SELECT id, username, role, company_name, vendor_type FROM users WHERE id = $1", newID,
+    ).Scan(&newUser.ID, &newUser.Username, &newUser.Role, &newUser.CompanyName, &newUser.VendorType)
+     if err != nil {
+        log.Printf("Error fetching newly created user: %v", err)
+        c.JSON(http.StatusCreated, gin.H{"id": newID, "username": req.Username, "role": req.Role, "companyName": req.CompanyName, "vendorType": req.VendorType})
+        return
+    }
 
-	c.JSON(http.StatusCreated, gin.H{"id": newID, "username": req.Username, "role": req.Role, "companyName": req.CompanyName, "vendorType": req.VendorType})
+    c.JSON(http.StatusCreated, newUser)
 }
 
 func updateUser(c *gin.Context) {
-	id := c.Param("id")
-	var req UserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-		return
-	}
+    id := c.Param("id")
+    var req UserRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
 
-	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
-		return
-	}
+    if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
+        return
+    }
 
-	if req.Password != "" {
-		_, err := db.Exec(
-			`UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4, password=$5
-			 WHERE id=$6`,
-			req.Username, req.Role, req.CompanyName, req.VendorType, req.Password, id,
-		)
-		if err != nil {
-			log.Printf("Error updating user with password: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
-			return
-		}
-	} else {
-		_, err := db.Exec(
-			`UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4
-			 WHERE id=$5`,
-			req.Username, req.Role, req.CompanyName, req.VendorType, id,
-		)
-		if err != nil {
-			log.Printf("Error updating user w/o password: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
-			return
-		}
-	}
+    if req.Password != "" {
+        _, err := db.Exec(
+            `UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4, password=$5
+             WHERE id=$6`,
+            req.Username, req.Role, req.CompanyName, req.VendorType, req.Password, id,
+        )
+        if err != nil {
+            log.Printf("Error updating user with password: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
+            return
+        }
+    } else {
+        _, err := db.Exec(
+            `UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4
+             WHERE id=$5`,
+            req.Username, req.Role, req.CompanyName, req.VendorType, id,
+        )
+        if err != nil {
+            log.Printf("Error updating user w/o password: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
+            return
+        }
+    }
 
-	c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil diupdate", "id": id, "username": req.Username, "role": req.Role})
+    c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil diupdate", "id": id, "username": req.Username, "role": req.Role})
 }
 
 func deleteUser(c *gin.Context) {
-	id := c.Param("id")
+    id := c.Param("id")
 
-	_, err := db.Exec("DELETE FROM users WHERE id = $1", id)
-	if err != nil {
-		log.Printf("Error deleting user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus pengguna"})
-		return
-	}
+    _, err := db.Exec("DELETE FROM users WHERE id = $1", id)
+    if err != nil {
+        log.Printf("Error deleting user: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus pengguna"})
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil dihapus"})
+    c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil dihapus"})
 }
+
+
+func getVendors(c *gin.Context) {
+    rows, err := db.Query("SELECT id, company_name, vendor_type, created_at, updated_at FROM vendors ORDER BY company_name")
+    if err != nil {
+        log.Printf("Error querying vendors: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data vendor"})
+        return
+    }
+    defer rows.Close()
+
+    vendors := make([]Vendor, 0)
+    for rows.Next() {
+        var v Vendor
+        if err := rows.Scan(&v.ID, &v.CompanyName, &v.VendorType, &v.CreatedAt, &v.UpdatedAt); err != nil {
+            log.Printf("Error scanning vendor: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data vendor"})
+            return
+        }
+        vendors = append(vendors, v)
+    }
+
+    c.JSON(http.StatusOK, vendors)
+}
+
+func createVendor(c *gin.Context) {
+    var v Vendor
+    if err := c.ShouldBindJSON(&v); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
+
+    err := db.QueryRow(
+        `INSERT INTO vendors (company_name, vendor_type)
+         VALUES ($1, $2)
+         RETURNING id, created_at, updated_at`,
+        v.CompanyName, v.VendorType,
+    ).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
+
+    if err != nil {
+        log.Printf("Error creating vendor: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat vendor: " + err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusCreated, v)
+}
+
+func updateVendor(c *gin.Context) {
+    id := c.Param("id")
+    var v Vendor
+    if err := c.ShouldBindJSON(&v); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
+
+    _, err := db.Exec(
+        `UPDATE vendors SET company_name=$1, vendor_type=$2, updated_at=NOW()
+         WHERE id=$3`,
+        v.CompanyName, v.VendorType, id,
+    )
+    if err != nil {
+        log.Printf("Error updating vendor: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update vendor: " + err.Error()})
+        return
+    }
+    
+    c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil diupdate", "id": id})
+}
+
+func deleteVendor(c *gin.Context) {
+    id := c.Param("id")
+
+    _, err := db.Exec("DELETE FROM vendors WHERE id = $1", id)
+    if err != nil {
+        log.Printf("Error deleting vendor: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus vendor"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
+}
+
+// ++ BATAS HANDLER BARU ++
+
 
 func getDashboardData(c *gin.Context) {
     var data DashboardData
@@ -551,27 +666,27 @@ func createProject(c *gin.Context) {
 }
 
 func createBulkProjects(c *gin.Context) {
-	role := c.GetHeader("X-User-Role")
-	if role != "Admin" { 
-		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Admin yang dapat menambah proyek massal"})
-		return
-	}
-	var projects []Project
-	if err := c.ShouldBindJSON(&projects); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-		return
-	}
-	if len(projects) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data proyek yang dikirim"})
-		return
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi: " + err.Error()})
-		return
-	}
+    role := c.GetHeader("X-User-Role")
+    if role != "Admin" { 
+        c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Admin yang dapat menambah proyek massal"})
+        return
+    }
+    var projects []Project
+    if err := c.ShouldBindJSON(&projects); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
+    if len(projects) == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data proyek yang dikirim"})
+        return
+    }
+    tx, err := db.Begin()
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi: " + err.Error()})
+        return
+    }
 
-	stmt, err := tx.Prepare(`
+    stmt, err := tx.Prepare(`
         INSERT INTO projects (
             project_name, wbs, category, plan_start, quantity,
             vendor_panel, vendor_busbar, panel_progress, status_busbar,
@@ -604,42 +719,42 @@ func createBulkProjects(c *gin.Context) {
             actual_delivery_accessories_busbar = EXCLUDED.actual_delivery_accessories_busbar,
             updated_at = NOW()
     `)
-	if err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan statement upsert: " + err.Error()})
-		return
-	}
-	defer stmt.Close()
+    if err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan statement upsert: " + err.Error()})
+        return
+    }
+    defer stmt.Close()
 
-	processedCount := 0
-	for _, p := range projects {
-		_, err := stmt.Exec(
-			p.ProjectName, p.WBS, p.Category, p.PlanStart, p.Quantity,
-			p.VendorPanel, p.VendorBusbar, p.PanelProgress, p.StatusBusbar,
-			p.FatStart,
-			p.PlanDeliveryBasicKitPanel, p.PlanDeliveryBasicKitBusbar,
-			p.ActualDeliveryBasicKitPanel, p.ActualDeliveryBasicKitBusbar,
-			p.PlanDeliveryAccessoriesPanel, p.PlanDeliveryAccessoriesBusbar,
-			p.ActualDeliveryAccessoriesPanel, p.ActualDeliveryAccessoriesBusbar,
-		)
-		if err != nil {
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Gagal upsert data proyek '%s': %s", p.ProjectName, err.Error())})
-			return
-		}
-		processedCount++
-	}
+    processedCount := 0
+    for _, p := range projects {
+        _, err := stmt.Exec(
+            p.ProjectName, p.WBS, p.Category, p.PlanStart, p.Quantity,
+            p.VendorPanel, p.VendorBusbar, p.PanelProgress, p.StatusBusbar,
+            p.FatStart,
+            p.PlanDeliveryBasicKitPanel, p.PlanDeliveryBasicKitBusbar,
+            p.ActualDeliveryBasicKitPanel, p.ActualDeliveryBasicKitBusbar,
+            p.PlanDeliveryAccessoriesPanel, p.PlanDeliveryAccessoriesBusbar,
+            p.ActualDeliveryAccessoriesPanel, p.ActualDeliveryAccessoriesBusbar,
+        )
+        if err != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Gagal upsert data proyek '%s': %s", p.ProjectName, err.Error())})
+            return
+        }
+        processedCount++
+    }
 
-	err = tx.Commit()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal commit transaksi: " + err.Error()})
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"message": fmt.Sprintf("%d data proyek berhasil diproses (ditambah/diupdate).", processedCount)})
+    err = tx.Commit()
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal commit transaksi: " + err.Error()})
+        return
+    }
+    c.JSON(http.StatusCreated, gin.H{"message": fmt.Sprintf("%d data proyek berhasil diproses (ditambah/diupdate).", processedCount)})
 }
 
 func getProjects(c *gin.Context) {
-	rows, err := db.Query(`
+    rows, err := db.Query(`
         SELECT 
             id, project_name, wbs, category, quantity, vendor_panel, vendor_busbar, 
             panel_progress, status_busbar, created_at, updated_at,
@@ -651,35 +766,35 @@ func getProjects(c *gin.Context) {
         FROM projects 
         ORDER BY plan_start ASC
     `)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data proyek: " + err.Error()})
-		return
-	}
-	defer rows.Close()
-	projects := make([]Project, 0)
-	for rows.Next() {
-		var p Project
-		if err := rows.Scan(
-			&p.ID, &p.ProjectName, &p.WBS, &p.Category, &p.Quantity, &p.VendorPanel, &p.VendorBusbar,
-			&p.PanelProgress, &p.StatusBusbar, &p.CreatedAt, &p.UpdatedAt,
-			&p.PlanStart, &p.FatStart,
-			&p.PlanDeliveryBasicKitPanel, &p.PlanDeliveryBasicKitBusbar,
-			&p.ActualDeliveryBasicKitPanel, &p.ActualDeliveryBasicKitBusbar,
-			&p.PlanDeliveryAccessoriesPanel, &p.PlanDeliveryAccessoriesBusbar,
-			&p.ActualDeliveryAccessoriesPanel, &p.ActualDeliveryAccessoriesBusbar,
-		); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data proyek: " + err.Error()})
-			return
-		}
-		projects = append(projects, p)
-	}
-	c.JSON(http.StatusOK, projects)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data proyek: " + err.Error()})
+        return
+    }
+    defer rows.Close()
+    projects := make([]Project, 0)
+    for rows.Next() {
+        var p Project
+        if err := rows.Scan(
+            &p.ID, &p.ProjectName, &p.WBS, &p.Category, &p.Quantity, &p.VendorPanel, &p.VendorBusbar,
+            &p.PanelProgress, &p.StatusBusbar, &p.CreatedAt, &p.UpdatedAt,
+            &p.PlanStart, &p.FatStart,
+            &p.PlanDeliveryBasicKitPanel, &p.PlanDeliveryBasicKitBusbar,
+            &p.ActualDeliveryBasicKitPanel, &p.ActualDeliveryBasicKitBusbar,
+            &p.PlanDeliveryAccessoriesPanel, &p.PlanDeliveryAccessoriesBusbar,
+            &p.ActualDeliveryAccessoriesPanel, &p.ActualDeliveryAccessoriesBusbar,
+        ); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data proyek: " + err.Error()})
+            return
+        }
+        projects = append(projects, p)
+    }
+    c.JSON(http.StatusOK, projects)
 }
 
 func getProjectByID(c *gin.Context) {
-	id := c.Param("id")
-	var p Project
-	err := db.QueryRow(`
+    id := c.Param("id")
+    var p Project
+    err := db.QueryRow(`
         SELECT 
             id, project_name, wbs, category, quantity, vendor_panel, vendor_busbar, 
             panel_progress, status_busbar, created_at, updated_at,
@@ -689,39 +804,39 @@ func getProjectByID(c *gin.Context) {
             plan_delivery_accessories_panel, plan_delivery_accessories_busbar,
             actual_delivery_accessories_panel, actual_delivery_accessories_busbar
         FROM projects WHERE id = $1`, id).Scan(
-		&p.ID, &p.ProjectName, &p.WBS, &p.Category, &p.Quantity, &p.VendorPanel, &p.VendorBusbar,
-		&p.PanelProgress, &p.StatusBusbar, &p.CreatedAt, &p.UpdatedAt,
-		&p.PlanStart, &p.FatStart,
-		&p.PlanDeliveryBasicKitPanel, &p.PlanDeliveryBasicKitBusbar,
-		&p.ActualDeliveryBasicKitPanel, &p.ActualDeliveryBasicKitBusbar,
-		&p.PlanDeliveryAccessoriesPanel, &p.PlanDeliveryAccessoriesBusbar,
-		&p.ActualDeliveryAccessoriesPanel, &p.ActualDeliveryAccessoriesBusbar,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Proyek tidak ditemukan"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil proyek"})
-		return
-	}
-	c.JSON(http.StatusOK, p)
+        &p.ID, &p.ProjectName, &p.WBS, &p.Category, &p.Quantity, &p.VendorPanel, &p.VendorBusbar,
+        &p.PanelProgress, &p.StatusBusbar, &p.CreatedAt, &p.UpdatedAt,
+        &p.PlanStart, &p.FatStart,
+        &p.PlanDeliveryBasicKitPanel, &p.PlanDeliveryBasicKitBusbar,
+        &p.ActualDeliveryBasicKitPanel, &p.ActualDeliveryBasicKitBusbar,
+        &p.PlanDeliveryAccessoriesPanel, &p.PlanDeliveryAccessoriesBusbar,
+        &p.ActualDeliveryAccessoriesPanel, &p.ActualDeliveryAccessoriesBusbar,
+    )
+    if err != nil {
+        if err == sql.ErrNoRows {
+            c.JSON(http.StatusNotFound, gin.H{"error": "Proyek tidak ditemukan"})
+            return
+        }
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil proyek"})
+        return
+    }
+    c.JSON(http.StatusOK, p)
 }
 
 func updateProject(c *gin.Context) {
-	id := c.Param("id")
-	role := c.GetHeader("X-User-Role")
-	if role == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak punya izin untuk update"})
-		return
-	}
-	var p Project
-	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
-		return
-	}
-	_, err := db.Exec(
-		`UPDATE projects SET 
+    id := c.Param("id")
+    role := c.GetHeader("X-User-Role")
+    if role == "" {
+        c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak punya izin untuk update"})
+        return
+    }
+    var p Project
+    if err := c.ShouldBindJSON(&p); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
+        return
+    }
+    _, err := db.Exec(
+        `UPDATE projects SET 
             project_name=$1, wbs=$2, category=$3, quantity=$4, 
             vendor_panel=$5, vendor_busbar=$6, panel_progress=$7, status_busbar=$8,
             plan_start=$9, fat_start=$10, 
@@ -731,54 +846,54 @@ func updateProject(c *gin.Context) {
             actual_delivery_accessories_panel=$17, actual_delivery_accessories_busbar=$18,
             updated_at=NOW()
          WHERE id=$19`,
-		p.ProjectName, p.WBS, p.Category, p.Quantity,
-		p.VendorPanel, p.VendorBusbar, p.PanelProgress, p.StatusBusbar,
-		p.PlanStart, p.FatStart,
-		p.PlanDeliveryBasicKitPanel, p.PlanDeliveryBasicKitBusbar,
-		p.ActualDeliveryBasicKitPanel, p.ActualDeliveryBasicKitBusbar,
-		p.PlanDeliveryAccessoriesPanel, p.PlanDeliveryAccessoriesBusbar,
-		p.ActualDeliveryAccessoriesPanel, p.ActualDeliveryAccessoriesBusbar,
-		id,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Proyek berhasil diupdate"})
+        p.ProjectName, p.WBS, p.Category, p.Quantity,
+        p.VendorPanel, p.VendorBusbar, p.PanelProgress, p.StatusBusbar,
+        p.PlanStart, p.FatStart,
+        p.PlanDeliveryBasicKitPanel, p.PlanDeliveryBasicKitBusbar,
+        p.ActualDeliveryBasicKitPanel, p.ActualDeliveryBasicKitBusbar,
+        p.PlanDeliveryAccessoriesPanel, p.PlanDeliveryAccessoriesBusbar,
+        p.ActualDeliveryAccessoriesPanel, p.ActualDeliveryAccessoriesBusbar,
+        id,
+    )
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"message": "Proyek berhasil diupdate"})
 }
 
 func deleteProject(c *gin.Context) {
-	id := c.Param("id")
-	role := c.GetHeader("X-User-Role")
-	if role != "Admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Admin yang dapat menghapus proyek"})
-		return
-	}
-	_, err := db.Exec("DELETE FROM projects WHERE id = $1", id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus proyek"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Proyek berhasil dihapus"})
+    id := c.Param("id")
+    role := c.GetHeader("X-User-Role")
+    if role != "Admin" {
+        c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Admin yang dapat menghapus proyek"})
+        return
+    }
+    _, err := db.Exec("DELETE FROM projects WHERE id = $1", id)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus proyek"})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"message": "Proyek berhasil dihapus"})
 }
 
 func startPanelDelivery(c *gin.Context) {
-	id := c.Param("id")
+    id := c.Param("id")
 
-	var planStart time.Time
-	err := db.QueryRow("SELECT plan_start FROM projects WHERE id = $1", id).Scan(&planStart)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Proyek tidak ditemukan"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data proyek: " + err.Error()})
-		return
-	}
+    var planStart time.Time
+    err := db.QueryRow("SELECT plan_start FROM projects WHERE id = $1", id).Scan(&planStart)
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            c.JSON(http.StatusNotFound, gin.H{"error": "Proyek tidak ditemukan"})
+            return
+        }
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data proyek: " + err.Error()})
+        return
+    }
 
-	planDeliveryDate := planStart.AddDate(0, 0, 7)
+    planDeliveryDate := planStart.AddDate(0, 0, 7)
 
-	_, err = db.Exec(`
+    _, err = db.Exec(`
         UPDATE projects SET 
             plan_delivery_basic_kit_panel = $1, 
             plan_delivery_basic_kit_busbar = $2, 
@@ -786,48 +901,48 @@ func startPanelDelivery(c *gin.Context) {
             status_busbar = 'Done',
             updated_at = NOW()
         WHERE id = $3`, planDeliveryDate, planDeliveryDate, id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Proyek diupdate: Pengiriman Basic Kit (Plan) telah dimulai"})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"message": "Proyek diupdate: Pengiriman Basic Kit (Plan) telah dimulai"})
 }
 
 func startAccessoriesDelivery(c *gin.Context) {
-	id := c.Param("id")
+    id := c.Param("id")
 
-	var req struct {
-		FatStart string `json:"fatStart" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-		return
-	}
+    var req struct {
+        FatStart string `json:"fatStart" binding:"required"`
+    }
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
 
-	fatDate, err := time.Parse("2006-01-02", req.FatStart)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format tanggal FAT tidak valid, gunakan YYYY-MM-DD"})
-		return
-	}
+    fatDate, err := time.Parse("2006-01-02", req.FatStart)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Format tanggal FAT tidak valid, gunakan YYYY-MM-DD"})
+        return
+    }
 
-	accessoriesDate := fatDate.AddDate(0, 0, 7)
+    accessoriesDate := fatDate.AddDate(0, 0, 7)
 
-	_, err = db.Exec(`
+    _, err = db.Exec(`
         UPDATE projects SET 
             fat_start = $1, 
             plan_delivery_accessories_panel = $2,
             plan_delivery_accessories_busbar = $3,
             updated_at = NOW()
         WHERE id = $4`, fatDate, accessoriesDate, accessoriesDate, id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Proyek diupdate: Pengiriman Accessories (Plan) telah dimulai"})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update proyek: " + err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"message": "Proyek diupdate: Pengiriman Accessories (Plan) telah dimulai"})
 }
 
 func getCompanies(c *gin.Context) {
-    rows, err := db.Query("SELECT DISTINCT company_name FROM users WHERE company_name IS NOT NULL AND company_name != '' ORDER BY company_name")
+    rows, err := db.Query("SELECT DISTINCT company_name FROM vendors ORDER BY company_name")
     if err != nil {
         log.Printf("Error querying companies: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar perusahaan"})
@@ -850,7 +965,7 @@ func getCompanies(c *gin.Context) {
 }
 
 func getVendorTypes(c *gin.Context) {
-    rows, err := db.Query("SELECT DISTINCT vendor_type FROM users WHERE vendor_type IS NOT NULL AND vendor_type != '' ORDER BY vendor_type")
+    rows, err := db.Query("SELECT DISTINCT vendor_type FROM vendors ORDER BY vendor_type")
     if err != nil {
         log.Printf("Error querying vendor types: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar tipe vendor"})
@@ -872,9 +987,10 @@ func getVendorTypes(c *gin.Context) {
     c.JSON(http.StatusOK, types)
 }
 
+
 func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
+    if value, ok := os.LookupEnv(key); ok {
+        return value
+    }
+    return fallback
 }
