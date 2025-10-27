@@ -116,6 +116,14 @@ type User struct {
 	VendorType  sql.NullString `json:"vendorType"` 
 }
 
+type UserRequest struct {
+	Username    string         `json:"username" binding:"required"`
+	Password    string         `json:"password,omitempty"`
+	Role        string         `json:"role" binding:"required"`
+	CompanyName sql.NullString `json:"companyName"`
+	VendorType  sql.NullString `json:"vendorType"`
+}
+
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
@@ -227,6 +235,16 @@ func main() {
 		projects.PATCH("/:id/start-accessories-delivery", startAccessoriesDelivery)
 
 		api.GET("/dashboard", getDashboardData)
+
+		users := api.Group("/users")
+		users.Use(AuthMiddleware())    
+		users.Use(AdminAuthMiddleware())
+		{
+			users.GET("/", getUsers)
+			users.POST("/", createUser)
+			users.PUT("/:id", updateUser)
+			users.DELETE("/:id", deleteUser)
+		}
 	}
     router.GET("/", func(c *gin.Context) {
         c.JSON(200, gin.H{"status": "API running"})
@@ -290,6 +308,128 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+func AdminAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetHeader("X-User-Role")
+		if role != "Admin" && role != "admin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Admin yang diizinkan"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func getUsers(c *gin.Context) {
+	rows, err := db.Query("SELECT id, username, role, company_name, vendor_type FROM users ORDER BY username")
+	if err != nil {
+		log.Printf("Error querying users: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data pengguna"})
+		return
+	}
+	defer rows.Close()
+
+	users := make([]User, 0)
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CompanyName, &u.VendorType); err != nil {
+			log.Printf("Error scanning user: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data pengguna"})
+			return
+		}
+		users = append(users, u)
+	}
+
+	c.JSON(http.StatusOK, users)
+}
+
+func createUser(c *gin.Context) {
+	var req UserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+		return
+	}
+
+	if req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password dibutuhkan untuk pengguna baru"})
+		return
+	}
+
+	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
+		return
+	}
+
+	var newID int
+	err := db.QueryRow(
+		`INSERT INTO users (username, password, role, company_name, vendor_type)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id`,
+		req.Username, req.Password, req.Role, req.CompanyName, req.VendorType,
+	).Scan(&newID)
+
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat pengguna: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": newID, "username": req.Username, "role": req.Role, "companyName": req.CompanyName, "vendorType": req.VendorType})
+}
+
+func updateUser(c *gin.Context) {
+	id := c.Param("id")
+	var req UserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+		return
+	}
+
+	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
+		return
+	}
+
+	if req.Password != "" {
+		_, err := db.Exec(
+			`UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4, password=$5
+			 WHERE id=$6`,
+			req.Username, req.Role, req.CompanyName, req.VendorType, req.Password, id,
+		)
+		if err != nil {
+			log.Printf("Error updating user with password: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
+			return
+		}
+	} else {
+		_, err := db.Exec(
+			`UPDATE users SET username=$1, role=$2, company_name=$3, vendor_type=$4
+			 WHERE id=$5`,
+			req.Username, req.Role, req.CompanyName, req.VendorType, id,
+		)
+		if err != nil {
+			log.Printf("Error updating user w/o password: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update pengguna: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil diupdate", "id": id, "username": req.Username, "role": req.Role})
+}
+
+func deleteUser(c *gin.Context) {
+	id := c.Param("id")
+
+	_, err := db.Exec("DELETE FROM users WHERE id = $1", id)
+	if err != nil {
+		log.Printf("Error deleting user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus pengguna"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil dihapus"})
+}
+
 func getDashboardData(c *gin.Context) {
     var data DashboardData
 
