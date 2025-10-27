@@ -170,10 +170,23 @@ func main() {
 		log.Fatalf("Gagal terhubung ke database: %v", err)
 	}
 	defer db.Close()
+	
 	if err = db.Ping(); err != nil {
 		log.Fatalf("Tidak bisa ping database: %v", err)
 	}
 	fmt.Println("✅ Berhasil terhubung ke PostgreSQL!")
+
+    sqlFile, err := os.ReadFile("init.sql")
+    if err != nil {
+        fmt.Println("Skipping init.sql:", err)
+    } else {
+        _, err = db.Exec(string(sqlFile))
+        if err != nil {
+            fmt.Println("Init.sql execution error:", err)
+        } else {
+            fmt.Println("Database initialized.")
+        }
+    }
 	router := gin.Default()
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"*"}
