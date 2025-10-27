@@ -227,8 +227,20 @@ func main() {
 
 		api.GET("/dashboard", getDashboardData)
 	}
-	fmt.Println("🚀 Server Go berjalan di http://localhost:8080")
-	router.Run(":8080")
+    router.GET("/", func(c *gin.Context) {
+        c.JSON(200, gin.H{"status": "API running"})
+    })
+
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080" 
+    }
+
+    fmt.Printf("🚀 Server Go berjalan di port %s\n", port)
+    if err := router.Run(":" + port); err != nil {
+        log.Fatal("❌ Failed to start server:", err)
+    }
+
 }
 
 func loginUser(c *gin.Context) {
