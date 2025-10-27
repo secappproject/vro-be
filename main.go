@@ -235,6 +235,9 @@ func main() {
 		projects.PATCH("/:id/start-accessories-delivery", startAccessoriesDelivery)
 
 		api.GET("/dashboard", getDashboardData)
+		
+		api.GET("/companies", AuthMiddleware(), getCompanies)
+        api.GET("/vendor-types", AuthMiddleware(), getVendorTypes)
 
 		users := api.Group("/users")
 		users.Use(AuthMiddleware())    
@@ -823,6 +826,51 @@ func startAccessoriesDelivery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Proyek diupdate: Pengiriman Accessories (Plan) telah dimulai"})
 }
 
+func getCompanies(c *gin.Context) {
+    rows, err := db.Query("SELECT DISTINCT company_name FROM users WHERE company_name IS NOT NULL AND company_name != '' ORDER BY company_name")
+    if err != nil {
+        log.Printf("Error querying companies: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar perusahaan"})
+        return
+    }
+    defer rows.Close()
+
+    companies := make([]string, 0)
+    for rows.Next() {
+        var company string
+        if err := rows.Scan(&company); err != nil {
+            log.Printf("Error scanning company: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai nama perusahaan"})
+            return
+        }
+        companies = append(companies, company)
+    }
+
+    c.JSON(http.StatusOK, companies)
+}
+
+func getVendorTypes(c *gin.Context) {
+    rows, err := db.Query("SELECT DISTINCT vendor_type FROM users WHERE vendor_type IS NOT NULL AND vendor_type != '' ORDER BY vendor_type")
+    if err != nil {
+        log.Printf("Error querying vendor types: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar tipe vendor"})
+        return
+    }
+    defer rows.Close()
+
+    types := make([]string, 0)
+    for rows.Next() {
+        var vtype string
+        if err := rows.Scan(&vtype); err != nil {
+            log.Printf("Error scanning vendor type: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai tipe vendor"})
+            return
+        }
+        types = append(types, vtype)
+    }
+
+    c.JSON(http.StatusOK, types)
+}
 
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
