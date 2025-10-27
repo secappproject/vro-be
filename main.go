@@ -153,7 +153,6 @@ type Project struct {
     ActualDeliveryAccessoriesBusbar JSONNullTime `json:"actualDeliveryAccessoriesBusbar"`
 }
 
-// ++ STRUCT BARU ++
 type Vendor struct {
     ID          int       `json:"id"`
     CompanyName string    `json:"companyName" binding:"required"`
@@ -161,7 +160,6 @@ type Vendor struct {
     CreatedAt   time.Time `json:"createdAt"`
     UpdatedAt   time.Time `json:"updatedAt"`
 }
-// ++ BATAS STRUCT BARU ++
 
 type DashboardData struct {
     TotalProjects   int            `json:"totalProjects"`
@@ -544,9 +542,6 @@ func deleteVendor(c *gin.Context) {
 
     c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
-
-// ++ BATAS HANDLER BARU ++
-
 
 func getDashboardData(c *gin.Context) {
     var data DashboardData
