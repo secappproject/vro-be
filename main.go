@@ -13,8 +13,17 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
+    _ "github.com/lib/pq"
+    "github.com/joho/godotenv"
 )
+
+func mustGetEnv(key string) string {
+    value, ok := os.LookupEnv(key)
+    if !ok || value == "" {
+        log.Fatalf("❌ Missing required environment variable: %s", key)
+    }
+    return value
+}
 
 type JSONDate time.Time
 
@@ -158,23 +167,30 @@ type BusbarStat struct {
 var db *sql.DB
 
 func main() {
-	connStr := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=5432 sslmode=disable",
-		getEnv("POSTGRES_HOST", "localhost"),
-		getEnv("POSTGRES_USER", "user"),
-		getEnv("POSTGRES_PASSWORD", "password"),
-		getEnv("POSTGRES_DB", "app_db"),
-	)
-	var err error
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatalf("Gagal terhubung ke database: %v", err)
-	}
-	defer db.Close()
-	
-	if err = db.Ping(); err != nil {
-		log.Fatalf("Tidak bisa ping database: %v", err)
-	}
-	fmt.Println("✅ Berhasil terhubung ke PostgreSQL!")
+    if err := godotenv.Load(); err != nil {
+        log.Println("⚠️  No .env file found — assuming production environment")
+    }
+
+    connStr := fmt.Sprintf(
+        "host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
+        mustGetEnv("POSTGRES_HOST"),
+        mustGetEnv("POSTGRES_USER"),
+        mustGetEnv("POSTGRES_PASSWORD"),
+        mustGetEnv("POSTGRES_DB"),
+        mustGetEnv("POSTGRES_PORT"),
+    )
+
+    db, err := sql.Open("postgres", connStr)
+    if err != nil {
+        log.Fatal("❌ Failed to open database connection:", err)
+    }
+    defer db.Close()
+
+    if err := db.Ping(); err != nil {
+        log.Fatal("❌ Database ping failed:", err)
+    }
+
+    log.Println("✅ Connected to PostgreSQL successfully!")
 
     sqlFile, err := os.ReadFile("init.sql")
     if err != nil {
