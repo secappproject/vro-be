@@ -63,7 +63,8 @@ type Material struct {
     MaxBinQty           int    `json:"maxBinQty" binding:"required"`
     MinBinQty           int    `json:"minBinQty" binding:"required"`
     VendorCode          string `json:"vendorCode"`    
-    CurrentQuantity     int    `json:"currentQuantity"`                  
+    CurrentQuantity     int    `json:"currentQuantity"`       
+    PIC                 string `json:"pic"`           
 }
 
 type MaterialStatusResponse struct {
@@ -589,36 +590,57 @@ func createMaterial(c *gin.Context) {
     c.JSON(http.StatusCreated, m)
 }
 func updateMaterial(c *gin.Context) {
-    id := c.Param("id")
-    var m Material
-    if err := c.ShouldBindJSON(&m); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-        return
-    }
+	id := c.Param("id")
+	var m Material
+	if err := c.ShouldBindJSON(&m); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+		return
+	}
 
-    if m.PackQuantity <= 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus lebih besar dari 0"})
-        return
-    }
-    if m.MaxBinQty < m.MinBinQty {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
-        return
-    }
-    if m.MaxBinQty%m.PackQuantity != 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty harus merupakan kelipatan dari Pack Quantity"})
-        return
-    }
+	var oldQty int
+	err := db.QueryRow("SELECT current_quantity FROM materials WHERE id = $1", id).Scan(&oldQty)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Material tidak ditemukan"})
+			return
+		}
+		log.Printf("Error querying old stock: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi stok lama"})
+		return
+	}
 
-    if m.CurrentQuantity < 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity tidak boleh negatif"})
-        return
-    }
-    if m.CurrentQuantity > m.MaxBinQty {
-         c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
-        return
-    }
-    _, err := db.Exec(
-        `UPDATE materials SET 
+	if m.CurrentQuantity != oldQty && m.PIC == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "PIC (Nama Anda) wajib diisi saat mengubah Current Stock."})
+		return
+	}
+
+	if m.CurrentQuantity != oldQty && m.PIC != "" {
+		log.Printf("--- STOCK CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldQty, m.CurrentQuantity)
+	}
+
+	if m.PackQuantity <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus lebih besar dari 0"})
+		return
+	}
+	if m.MaxBinQty < m.MinBinQty {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
+		return
+	}
+	if m.MaxBinQty%m.PackQuantity != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty harus merupakan kelipatan dari Pack Quantity"})
+		return
+	}
+
+	if m.CurrentQuantity < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity tidak boleh negatif"})
+		return
+	}
+	if m.CurrentQuantity > m.MaxBinQty {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
+		return
+	}
+	_, err = db.Exec(
+		`UPDATE materials SET 
             material_code = $1, 
             material_description = $2, 
             location = $3, 
@@ -628,20 +650,20 @@ func updateMaterial(c *gin.Context) {
             vendor_code = $7,
             current_quantity = $8 
          WHERE id = $9`,
-        m.MaterialCode, m.MaterialDescription, m.Location,
-        m.PackQuantity, m.MaxBinQty, m.MinBinQty,
-        m.VendorCode,
-        m.CurrentQuantity, 
-        id, 
-    )
+		m.MaterialCode, m.MaterialDescription, m.Location,
+		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
+		m.VendorCode,
+		m.CurrentQuantity,
+		id,
+	)
 
-    if err != nil {
-        log.Printf("Error updating material: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update material: " + err.Error()})
-        return
-    }
+	if err != nil {
+		log.Printf("Error updating material: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update material: " + err.Error()})
+		return
+	}
 
-    c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
+	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id"})
 }
 
 func deleteMaterial(c *gin.Context) {
