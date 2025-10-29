@@ -62,7 +62,7 @@ type Material struct {
     PackQuantity        int    `json:"packQuantity" binding:"required"`
     MaxBinQty           int    `json:"maxBinQty" binding:"required"`
     MinBinQty           int    `json:"minBinQty" binding:"required"`
-    VendorCode          string `json:"vendorCode" binding:"required"`    
+    VendorCode          string `json:"vendorCode"`    
     CurrentQuantity     int    `json:"currentQuantity"`                  
 }
 
