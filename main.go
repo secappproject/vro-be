@@ -117,10 +117,18 @@ func main() {
 
     router := gin.Default()
     router.RedirectTrailingSlash = true    
-    config := cors.DefaultConfig()
-    config.AllowOrigins = []string{"*"}
-    config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "PUT"}
-    config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization", "X-User-Role"}
+    // config := cors.DefaultConfig()
+    // config.AllowOrigins = []string{"*"}
+    // config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "PUT"}
+    // config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization", "X-User-Role"}
+    config := cors.Config{
+        AllowOrigins:     []string{"https://vro-fe.vercel.app", "http://localhost:3000","http://localhost:3001"},
+        AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+        AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role"},
+        ExposeHeaders:    []string{"Content-Length"},
+        AllowCredentials: true,
+        MaxAge:           12 * time.Hour,
+    }
     router.Use(cors.New(config))
     api := router.Group("/api")
 
