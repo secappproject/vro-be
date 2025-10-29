@@ -63,8 +63,7 @@ type Material struct {
     MaxBinQty           int    `json:"maxBinQty" binding:"required"`
     MinBinQty           int    `json:"minBinQty" binding:"required"`
     VendorCode          string `json:"vendorCode" binding:"required"`    
-    CurrentQuantity     int    `json:"currentQuantity"`      
-    Remark              string `json:"remark"`
+    CurrentQuantity     int    `json:"currentQuantity"`                  
 }
 
 type MaterialStatusResponse struct {
@@ -500,6 +499,7 @@ func deleteVendor(c *gin.Context) {
 
     c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
+
 func getMaterials(c *gin.Context) {
     rows, err := db.Query(`
         SELECT id, material_code, material_description, location, 
@@ -534,22 +534,6 @@ func getMaterials(c *gin.Context) {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data material"})
             return
         }
-
-        triggerPoint := m.MinBinQty
-        if m.PackQuantity > m.MinBinQty {
-            triggerPoint = m.PackQuantity
-        }
-        
-        preshortagePoint := float64(m.MaxBinQty) / 2.0
-
-        if m.CurrentQuantity <= triggerPoint {
-            m.Remark = "Shortage" 
-        } else if m.CurrentQuantity > triggerPoint && float64(m.CurrentQuantity) <= preshortagePoint {
-            m.Remark = "Preshortage" 
-        } else { 
-            m.Remark = "OK" 
-        }
-
         materials = append(materials, m)
     }
 
@@ -561,6 +545,7 @@ func getMaterials(c *gin.Context) {
 
     c.JSON(http.StatusOK, materials)
 }
+
 func createMaterial(c *gin.Context) {
     var m Material
     if err := c.ShouldBindJSON(&m); err != nil {
