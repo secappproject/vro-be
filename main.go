@@ -221,6 +221,7 @@ func main() {
         }
     }
     router := gin.Default()
+    router.RedirectTrailingSlash = true
     config := cors.DefaultConfig()
     config.AllowOrigins = []string{"*"}
     config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "PUT"}
