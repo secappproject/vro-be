@@ -663,7 +663,7 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id"})
+	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id}) 
 }
 
 func deleteMaterial(c *gin.Context) {
