@@ -588,7 +588,6 @@ func createMaterial(c *gin.Context) {
 
     c.JSON(http.StatusCreated, m)
 }
-
 func updateMaterial(c *gin.Context) {
     id := c.Param("id")
     var m Material
@@ -610,8 +609,14 @@ func updateMaterial(c *gin.Context) {
         return
     }
 
-    // PENTING: Jangan biarkan user meng-update CurrentQuantity via form ini.
-    // CurrentQuantity HANYA boleh diubah oleh sistem scanner (scan IN/OUT).
+    if m.CurrentQuantity < 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity tidak boleh negatif"})
+        return
+    }
+    if m.CurrentQuantity > m.MaxBinQty {
+         c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
+        return
+    }
     _, err := db.Exec(
         `UPDATE materials SET 
             material_code = $1, 
@@ -620,11 +625,13 @@ func updateMaterial(c *gin.Context) {
             pack_quantity = $4, 
             max_bin_qty = $5, 
             min_bin_qty = $6, 
-            vendor_code = $7
-         WHERE id = $8`,
+            vendor_code = $7,
+            current_quantity = $8 
+         WHERE id = $9`,
         m.MaterialCode, m.MaterialDescription, m.Location,
         m.PackQuantity, m.MaxBinQty, m.MinBinQty,
         m.VendorCode,
+        m.CurrentQuantity, 
         id, 
     )
 
