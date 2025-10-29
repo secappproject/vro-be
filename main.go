@@ -82,7 +82,7 @@ func main() {
         log.Println("⚠️  No .env file found — assuming production environment")
     }
     connStr := fmt.Sprintf(
-        "host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+        "host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
         mustGetEnv("POSTGRES_HOST"),
         mustGetEnv("POSTGRES_USER"),
         mustGetEnv("POSTGRES_PASSWORD"),
@@ -123,6 +123,7 @@ func main() {
     config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization", "X-User-Role"}
     router.Use(cors.New(config))
     api := router.Group("/api")
+
     {
         api.POST("/login", loginUser)
 
@@ -136,6 +137,8 @@ func main() {
             users.DELETE("/:id", deleteUser)
         }
 
+        api.GET("/vendor-type", getVendorTypes)
+        api.GET("/companies", getCompanies)
         vendors := api.Group("/vendors")
         vendors.Use(AuthMiddleware())
         vendors.Use(AdminAuthMiddleware())
@@ -357,6 +360,55 @@ func deleteUser(c *gin.Context) {
 
     c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil dihapus"})
 }
+
+
+
+func getCompanies(c *gin.Context) {
+    rows, err := db.Query("SELECT DISTINCT company_name FROM vendors ORDER BY company_name")
+    if err != nil {
+        log.Printf("Error querying companies: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar perusahaan"})
+        return
+    }
+    defer rows.Close()
+
+    companies := make([]string, 0)
+    for rows.Next() {
+        var company string
+        if err := rows.Scan(&company); err != nil {
+            log.Printf("Error scanning company: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai nama perusahaan"})
+            return
+        }
+        companies = append(companies, company)
+    }
+
+    c.JSON(http.StatusOK, companies)
+}
+
+func getVendorTypes(c *gin.Context) {
+    rows, err := db.Query("SELECT DISTINCT vendor_type FROM vendors ORDER BY vendor_type")
+    if err != nil {
+        log.Printf("Error querying vendor types: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar tipe vendor"})
+        return
+    }
+    defer rows.Close()
+
+    types := make([]string, 0)
+    for rows.Next() {
+        var vtype string
+        if err := rows.Scan(&vtype); err != nil {
+            log.Printf("Error scanning vendor type: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai tipe vendor"})
+            return
+        }
+        types = append(types, vtype)
+    }
+
+    c.JSON(http.StatusOK, types)
+}
+
 
 
 func getVendors(c *gin.Context) {
