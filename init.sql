@@ -1,59 +1,83 @@
-DROP TABLE IF EXISTS projects;
+-- Hapus tabel yang mungkin ada sebelumnya (termasuk materials)
+DROP TABLE IF EXISTS materials;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS vendors;
-DROP TYPE IF EXISTS project_category;
-DROP TYPE IF EXISTS busbar_status;
-DROP TYPE IF EXISTS tracking_status;
 DROP TYPE IF EXISTS user_role;
 
-CREATE TYPE project_category AS ENUM ('PIX', 'MCZ');
-CREATE TYPE busbar_status AS ENUM ('Punching/Bending', 'Plating', 'Heatshrink', 'Done');
+-- tipe yang dibutuhkan (hanya user_role)
 CREATE TYPE user_role AS ENUM ('Admin', 'PIC', 'Production Planning', 'External/Vendor');
 
+--=================================================================
+-- TABEL VENDORS
+--=================================================================
 CREATE TABLE vendors (
     id SERIAL PRIMARY KEY,
-    company_name VARCHAR(100) UNIQUE NOT NULL,
+    company_name VARCHAR(100) UNIQUE NOT NULL, -- Ini akan jadi 'vendor_code' di tabel material
     vendor_type VARCHAR(50) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+--=================================================================
+-- TABEL USERS (Sesuai skema Anda)
+--=================================================================
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
     password TEXT NOT NULL,
     role user_role NOT NULL,
-    company_name VARCHAR(100),
+    company_name VARCHAR(100), -- Relasi ke vendors
     vendor_type VARCHAR(50),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE projects (
+--=================================================================
+-- TABEL MATERIALS
+--=================================================================
+CREATE TABLE materials (
     id SERIAL PRIMARY KEY,
-    project_name VARCHAR(255) NOT NULL,
-    wbs VARCHAR(100) UNIQUE NOT NULL,
-    category project_category,
-    plan_start DATE NOT NULL,
-    quantity INTEGER NOT NULL,
-    vendor_panel VARCHAR(100),
-    vendor_busbar VARCHAR(100),
-    panel_progress INTEGER DEFAULT 0 CHECK (panel_progress >= 0 AND panel_progress <= 100),
-    status_busbar busbar_status DEFAULT 'Punching/Bending',
+    material_code VARCHAR(100) UNIQUE NOT NULL,
+    material_description TEXT,
+    location VARCHAR(100),
+    
+    -- Setting Kuantitas
+    pack_quantity INT NOT NULL,  -- (Quantity per scan)
+    max_bin_qty INT NOT NULL,    -- (Batas Penuh/Ijo)
+    min_bin_qty INT NOT NULL,    -- (Batas Acuan Merah)
+    
+    -- Data Live
+    current_quantity INT NOT NULL DEFAULT 0,
+    
+    -- Relasi ke Vendor
+    vendor_code VARCHAR(100) NOT NULL,
+    
+    -- Constraint (Aturan Bisnis)
+    CONSTRAINT fk_vendor
+        FOREIGN KEY(vendor_code) 
+        REFERENCES vendors(company_name)
+        ON DELETE RESTRICT, -- Tidak bisa hapus vendor jika masih punya material
+        
+    -- Memastikan angka valid
+    CONSTRAINT check_positive_quantities
+        CHECK (pack_quantity > 0 AND max_bin_qty > 0 AND min_bin_qty >= 0),
+        
+    -- Memastikan max lebih besar dari min
+    CONSTRAINT check_max_greater_than_min
+        CHECK (max_bin_qty >= min_bin_qty),
+        
+    -- ATURAN KUNCI: Pack Quantity adalah kelipatan dari Max Quantity
+    CONSTRAINT check_pack_is_factor_of_max
+        CHECK (MOD(max_bin_qty, pack_quantity) = 0),
 
-    fat_start DATE,
-    plan_delivery_basic_kit_panel DATE,
-    plan_delivery_basic_kit_busbar DATE,
-    actual_delivery_basic_kit_panel DATE,
-    actual_delivery_basic_kit_busbar DATE,
-    plan_delivery_accessories_panel DATE,
-    plan_delivery_accessories_busbar DATE,
-    actual_delivery_accessories_panel DATE,
-    actual_delivery_accessories_busbar DATE,
-
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    -- ATURAN BARU (Opsional tapi direkomendasikan): Current Qty harus kelipatan Pack Qty
+    CONSTRAINT check_current_is_multiple_of_pack
+        CHECK (MOD(current_quantity, pack_quantity) = 0)
 );
 
+
+--=================================================================
+-- FUNGSI & TRIGGER
+--=================================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -62,16 +86,15 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_projects_updated_at
-BEFORE UPDATE ON projects
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
-
 CREATE TRIGGER update_vendors_updated_at
 BEFORE UPDATE ON vendors
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+
+--=================================================================
+-- DATA DUMMY (Vendors & Users)
+--=================================================================
 INSERT INTO vendors (company_name, vendor_type) VALUES
 ('ABACUS', 'Panel'),
 ('UMEDA', 'Panel'),
@@ -80,51 +103,6 @@ INSERT INTO vendors (company_name, vendor_type) VALUES
 ('Globalindo', 'Busbar'),
 ('Presisi', 'Busbar');
 
-INSERT INTO projects (
-    project_name, wbs, category, plan_start, quantity, vendor_panel, vendor_busbar,
-    panel_progress, status_busbar,
-    fat_start,
-    plan_delivery_basic_kit_panel,
-    plan_delivery_basic_kit_busbar,
-    plan_delivery_accessories_panel,
-    plan_delivery_accessories_busbar
-) VALUES
-('Project Alpha', 'WBS-001', 'PIX', '2025-11-01', 10, 'ABACUS', 'Triakarya', 0, 'Punching/Bending',
- '2025-11-15',
- '2025-11-08',
- '2025-11-08',
- '2025-11-22',
- '2025-11-22'
-),
-('Project Beta', 'WBS-002', 'MCZ', '2025-11-05', 5, 'UMEDA', 'Globalindo', 25, 'Plating',
- '2025-11-19',
- '2025-11-12',
- '2025-11-12',
- '2025-11-26',
- '2025-11-26'
-),
-('Project Gamma', 'WBS-003', 'PIX', '2025-11-10', 8, 'GAA', 'Presisi', 0, 'Punching/Bending',
- '2025-11-24',
- '2025-11-17',
- '2025-11-17',
- '2025-12-01',
- '2025-12-01'
-),
-('Project Delta', 'WBS-004', 'MCZ', '2025-11-12', 12, 'ABACUS', 'Globalindo', 50, 'Heatshrink',
- '2025-11-26',
- '2025-11-19',
- '2025-11-19',
- '2025-12-03',
- '2025-12-03'
-),
-('Project Epsilon', 'WBS-005', 'PIX', '2025-11-18', 7, 'UMEDA', 'Triakarya', 0, 'Punching/Bending',
- '2025-12-02',
- '2025-11-25',
- '2025-11-25',
- '2025-12-09',
- '2025-12-09'
-);
-
 INSERT INTO users (username, password, role) VALUES
 ('admin', 'adminpass', 'Admin'),
 ('pic_user', 'picpass', 'PIC'),
@@ -132,10 +110,41 @@ INSERT INTO users (username, password, role) VALUES
 
 INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
 ('vendor_abacus', 'abacuspass', 'External/Vendor', 'ABACUS', 'Panel'),
-('vendor_umeda', 'umedapass', 'External/Vendor', 'UMEDA', 'Panel'),
-('vendor_gaa', 'gaapass', 'External/Vendor', 'GAA', 'Panel'),
-('vendor_triakarya', 'triapass', 'External/Vendor', 'Triakarya', 'Busbar'),
-('vendor_global', 'globalpass', 'External/Vendor', 'Globalindo', 'Busbar'),
-('vendor_presisi', 'presisipass', 'External/Vendor', 'Presisi', 'Busbar');
+('vendor_umeda', 'umedapass', 'External/Vendor', 'UMEDA', 'Panel');
 
-SELECT '✅ Tabel projects, users, dan vendors berhasil dibuat dan diisi data dummy.';
+
+--=================================================================
+-- DATA DUMMY (Materials)
+-- Sesuai aturan: max_bin_qty HARUS habis dibagi pack_quantity
+-- DAN current_quantity HARUS habis dibagi pack_quantity
+--=================================================================
+INSERT INTO materials 
+    (material_code, material_description, location, pack_quantity, max_bin_qty, min_bin_qty, vendor_code, current_quantity) 
+VALUES
+    -- Skenario Normal (Min < Pack) -- DIPERBAIKI
+    ('PNL-AB-001', 'Panel Box 20x30', 'A-1', 50, 200, 20, 'ABACUS', 150), -- DIUBAH: 70 -> 150 (agar kelipatan 50)
+    -- (Stok 150. Scan OUT 1x -> Stok 100. Scan OUT 2x -> Stok 50. Stok 50 <= TitikMerah(50). TRIGGER)
+    
+    -- Skenario Normal (Min > Pack)
+    ('PNL-UM-002', 'Panel Box 50x70', 'A-2', 10, 100, 30, 'UMEDA', 100),
+    -- (Stok 100 (FULL). Scan OUT 1x -> Stok 90. ... Scan OUT 7x -> Stok 30. Stok 30 <= TitikMerah(30). TRIGGER)
+
+    -- Skenario Penuh (Current = Max)
+    ('BUS-TR-001', 'Busbar Tembaga 5x20', 'B-1', 25, 250, 50, 'Triakarya', 250),
+    -- (Stok 250 (FULL). Scan IN akan ditolak oleh backend)
+
+    -- Skenario Stok di Titik Merah (Min = Pack)
+    ('BUS-GL-002', 'Busbar Tembaga 10x40', 'B-2', 30, 150, 30, 'Globalindo', 30),
+    -- (Stok 30. Sudah merah. Scan OUT 1x -> Stok 0. TRIGGER)
+    
+    -- Skenario Stok Kosong
+    ('BUS-PR-003', 'Busbar Alumunium 3x10', 'B-3', 20, 200, 40, 'Presisi', 0),
+    -- (Stok 0. Merah)
+
+    -- Skenario 1 Pack = 1 Max
+    ('PNL-GAA-003', 'Panel Custom Assembly', 'A-3', 10, 10, 1, 'GAA', 10);
+    -- (Stok 10 (FULL). Scan OUT 1x -> Stok 0. Stok 0 <= TitikMerah(10). TRIGGER)
+
+
+-- Pesan sukses
+SELECT '✅ Tabel users, vendors, dan materials berhasil dibuat dan diisi data dummy (diperbaiki).';
