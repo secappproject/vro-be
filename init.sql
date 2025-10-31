@@ -1,8 +1,8 @@
 -- Hapus tabel yang mungkin ada sebelumnya (termasuk materials)
-DROP TABLE IF EXISTS materials;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS vendors;
-DROP TYPE IF EXISTS user_role;
+-- DROP TABLE IF EXISTS materials;
+-- DROP TABLE IF EXISTS users;
+-- DROP TABLE IF EXISTS vendors;
+-- DROP TYPE IF EXISTS user_role;
 
 -- tipe yang dibutuhkan (hanya user_role)
 CREATE TYPE user_role AS ENUM ('Admin', 'PIC', 'Production Planning', 'External/Vendor');
@@ -95,22 +95,22 @@ EXECUTE FUNCTION update_updated_at_column();
 --=================================================================
 -- DATA DUMMY (Vendors & Users)
 --=================================================================
-INSERT INTO vendors (company_name, vendor_type) VALUES
-('ABACUS', 'Panel'),
-('UMEDA', 'Panel'),
-('GAA', 'Panel'),
-('Triakarya', 'Busbar'),
-('Globalindo', 'Busbar'),
-('Presisi', 'Busbar');
+-- INSERT INTO vendors (company_name, vendor_type) VALUES
+-- ('ABACUS', 'Panel'),
+-- ('UMEDA', 'Panel'),
+-- ('GAA', 'Panel'),
+-- ('Triakarya', 'Busbar'),
+-- ('Globalindo', 'Busbar'),
+-- ('Presisi', 'Busbar');
 
-INSERT INTO users (username, password, role) VALUES
-('admin', 'adminpass', 'Admin'),
-('pic_user', 'picpass', 'PIC'),
-('pp_user', 'pppass', 'Production Planning');
+-- INSERT INTO users (username, password, role) VALUES
+-- ('admin', 'adminpass', 'Admin'),
+-- ('pic_user', 'picpass', 'PIC'),
+-- ('pp_user', 'pppass', 'Production Planning');
 
-INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
-('vendor_abacus', 'abacuspass', 'External/Vendor', 'ABACUS', 'Panel'),
-('vendor_umeda', 'umedapass', 'External/Vendor', 'UMEDA', 'Panel');
+-- INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
+-- ('vendor_abacus', 'abacuspass', 'External/Vendor', 'ABACUS', 'Panel'),
+-- ('vendor_umeda', 'umedapass', 'External/Vendor', 'UMEDA', 'Panel');
 
 
 --=================================================================
@@ -118,32 +118,32 @@ INSERT INTO users (username, password, role, company_name, vendor_type) VALUES
 -- Sesuai aturan: max_bin_qty HARUS habis dibagi pack_quantity
 -- DAN current_quantity HARUS habis dibagi pack_quantity
 --=================================================================
-INSERT INTO materials 
-    (material_code, material_description, location, pack_quantity, max_bin_qty, min_bin_qty, vendor_code, current_quantity) 
-VALUES
-    -- Skenario Normal (Min < Pack) -- DIPERBAIKI
-    ('PNL-AB-001', 'Panel Box 20x30', 'A-1', 50, 200, 20, 'ABACUS', 150), -- DIUBAH: 70 -> 150 (agar kelipatan 50)
-    -- (Stok 150. Scan OUT 1x -> Stok 100. Scan OUT 2x -> Stok 50. Stok 50 <= TitikMerah(50). TRIGGER)
+-- INSERT INTO materials 
+--     (material_code, material_description, location, pack_quantity, max_bin_qty, min_bin_qty, vendor_code, current_quantity) 
+-- VALUES
+--     -- Skenario Normal (Min < Pack) -- DIPERBAIKI
+--     ('PNL-AB-001', 'Panel Box 20x30', 'A-1', 50, 200, 20, 'ABACUS', 150), -- DIUBAH: 70 -> 150 (agar kelipatan 50)
+--     -- (Stok 150. Scan OUT 1x -> Stok 100. Scan OUT 2x -> Stok 50. Stok 50 <= TitikMerah(50). TRIGGER)
     
-    -- Skenario Normal (Min > Pack)
-    ('PNL-UM-002', 'Panel Box 50x70', 'A-2', 10, 100, 30, 'UMEDA', 100),
-    -- (Stok 100 (FULL). Scan OUT 1x -> Stok 90. ... Scan OUT 7x -> Stok 30. Stok 30 <= TitikMerah(30). TRIGGER)
+--     -- Skenario Normal (Min > Pack)
+--     ('PNL-UM-002', 'Panel Box 50x70', 'A-2', 10, 100, 30, 'UMEDA', 100),
+--     -- (Stok 100 (FULL). Scan OUT 1x -> Stok 90. ... Scan OUT 7x -> Stok 30. Stok 30 <= TitikMerah(30). TRIGGER)
 
-    -- Skenario Penuh (Current = Max)
-    ('BUS-TR-001', 'Busbar Tembaga 5x20', 'B-1', 25, 250, 50, 'Triakarya', 250),
-    -- (Stok 250 (FULL). Scan IN akan ditolak oleh backend)
+--     -- Skenario Penuh (Current = Max)
+--     ('BUS-TR-001', 'Busbar Tembaga 5x20', 'B-1', 25, 250, 50, 'Triakarya', 250),
+--     -- (Stok 250 (FULL). Scan IN akan ditolak oleh backend)
 
-    -- Skenario Stok di Titik Merah (Min = Pack)
-    ('BUS-GL-002', 'Busbar Tembaga 10x40', 'B-2', 30, 150, 30, 'Globalindo', 30),
-    -- (Stok 30. Sudah merah. Scan OUT 1x -> Stok 0. TRIGGER)
+--     -- Skenario Stok di Titik Merah (Min = Pack)
+--     ('BUS-GL-002', 'Busbar Tembaga 10x40', 'B-2', 30, 150, 30, 'Globalindo', 30),
+--     -- (Stok 30. Sudah merah. Scan OUT 1x -> Stok 0. TRIGGER)
     
-    -- Skenario Stok Kosong
-    ('BUS-PR-003', 'Busbar Alumunium 3x10', 'B-3', 20, 200, 40, 'Presisi', 0),
-    -- (Stok 0. Merah)
+--     -- Skenario Stok Kosong
+--     ('BUS-PR-003', 'Busbar Alumunium 3x10', 'B-3', 20, 200, 40, 'Presisi', 0),
+--     -- (Stok 0. Merah)
 
-    -- Skenario 1 Pack = 1 Max
-    ('PNL-GAA-003', 'Panel Custom Assembly', 'A-3', 10, 10, 1, 'GAA', 10);
-    -- (Stok 10 (FULL). Scan OUT 1x -> Stok 0. Stok 0 <= TitikMerah(10). TRIGGER)
+--     -- Skenario 1 Pack = 1 Max
+--     ('PNL-GAA-003', 'Panel Custom Assembly', 'A-3', 10, 10, 1, 'GAA', 10);
+--     -- (Stok 10 (FULL). Scan OUT 1x -> Stok 0. Stok 0 <= TitikMerah(10). TRIGGER)
 
 
 -- Pesan sukses
