@@ -108,6 +108,16 @@ CREATE TABLE material_bins (
     
     UNIQUE(material_id, bin_sequence_id)
 );
+
+ALTER TABLE materials
+DROP CONSTRAINT IF EXISTS check_current_is_multiple_of_pack;
+ALTER TABLE materials
+ADD CONSTRAINT check_current_quantity_logic
+CHECK (
+    product_type = 'kanban' 
+    OR 
+    (product_type <> 'kanban' AND current_quantity % pack_quantity = 0)
+);
 --=================================================================
 -- DATA DUMMY (Vendors & Users)
 --=================================================================
