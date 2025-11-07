@@ -56,7 +56,7 @@ CREATE TABLE materials (
         FOREIGN KEY(vendor_code) 
         REFERENCES vendors(company_name)
         ON DELETE RESTRICT, -- Tidak bisa hapus vendor jika masih punya material
-        
+
     -- Memastikan angka valid
     CONSTRAINT check_positive_quantities
         CHECK (pack_quantity > 0 AND max_bin_qty > 0 AND min_bin_qty >= 0),
@@ -74,6 +74,8 @@ CREATE TABLE materials (
         CHECK (MOD(current_quantity, pack_quantity) = 0)
 );
 
+ALTER TABLE materials
+DROP CONSTRAINT fk_vendor;
 
 --=================================================================
 -- FUNGSI & TRIGGER
@@ -91,7 +93,21 @@ BEFORE UPDATE ON vendors
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+ALTER TABLE materials
+ADD COLUMN product_type VARCHAR(20) NOT NULL DEFAULT 'kanban';
 
+CREATE TABLE material_bins (
+    id SERIAL PRIMARY KEY,
+    material_id INT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    
+    bin_sequence_id INT NOT NULL, 
+    
+    max_bin_stock INT NOT NULL,
+    
+    current_bin_stock INT NOT NULL DEFAULT 0,
+    
+    UNIQUE(material_id, bin_sequence_id)
+);
 --=================================================================
 -- DATA DUMMY (Vendors & Users)
 --=================================================================
