@@ -799,16 +799,16 @@ func updateMaterial(c *gin.Context) {
 			for _, bin := range m.Bins {
 				if bin.CurrentBinStock > m.PackQuantity {
 					tx.Rollback()
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Stok bin %d (%d) melebihi Pack Quantity (%d)", bin.BinSequenceId, bin.CurrentBinStock, m.PackQuantity)})
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Stok bin %d (%d) melebihi Pack Quantity (%d)", bin.BinSequenceID, bin.CurrentBinStock, m.PackQuantity)})
 					return
 				}
 				if bin.CurrentBinStock < 0 {
 					tx.Rollback()
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Stok bin %d (%d) tidak boleh negatif", bin.BinSequenceId, bin.CurrentBinStock)})
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Stok bin %d (%d) tidak boleh negatif", bin.BinSequenceID, bin.CurrentBinStock)})
 					return
 				}
 
-				_, err := stmt.Exec(id, bin.BinSequenceId, m.PackQuantity, bin.CurrentBinStock)
+				_, err := stmt.Exec(id, bin.BinSequenceID, m.PackQuantity, bin.CurrentBinStock)
 				if err != nil {
 					log.Printf("Error inserting bin: %v", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat bin material"})
