@@ -496,7 +496,9 @@ func deleteVendor(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
-}func getMaterials(c *gin.Context) {
+}
+
+func getMaterials(c *gin.Context) {
     rows, err := db.Query(`
             SELECT id, material_code, material_description, location, 
                 pack_quantity, max_bin_qty, min_bin_qty, 
