@@ -72,12 +72,13 @@ type Material struct {
 }
 
 type MaterialStatusResponse struct {
-	PackQuantity      int    `json:"packQuantity"`
-	MaxBinQty         int    `json:"maxBinQty"`
-	MinBinQty         int    `json:"minBinQty"`
-	CurrentQuantity   int    `json:"currentQuantity"`
-	ProductType       string `json:"productType"`
-	PredictedMovement string `json:"predictedMovement"`
+    PackQuantity      int    `json:"packQuantity"`
+    MaxBinQty         int    `json:"maxBinQty"`
+    MinBinQty         int    `json:"minBinQty"`
+    CurrentQuantity   int    `json:"currentQuantity"`
+    ProductType       string `json:"productType"`
+    PredictedMovement string `json:"predictedMovement"`
+    QuantityPerBin    int    `json:"quantityPerBin"`
 }
 
 type MaterialBin struct {
@@ -944,277 +945,310 @@ func deleteMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil dihapus (stok 0)"})
 }
-
 func scanAutoMaterials(c *gin.Context) {
-	var scannedValues []string
-	if err := c.ShouldBindJSON(&scannedValues); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
-		return
-	}
+    var scannedValues []string
+    if err := c.ShouldBindJSON(&scannedValues); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+        return
+    }
 
-	if len(scannedValues) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data scan untuk diproses"})
-		return
-	}
+    if len(scannedValues) == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data scan untuk diproses"})
+        return
+    }
 
-	tx, err := db.Begin()
-	if err != nil {
-		log.Printf("Error starting transaction: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi"})
-		return
-	}
-	defer tx.Rollback()
+    tx, err := db.Begin()
+    if err != nil {
+        log.Printf("Error starting transaction: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi"})
+        return
+    }
+    defer tx.Rollback()
 
-	for _, scannedValue := range scannedValues {
+    for _, scannedValue := range scannedValues {
 
-		parts := strings.Split(scannedValue, "_")
-		var materialCode, binIDStr, movement, qtyStr string
-		var scanFormat int // 1=Kanban, 2=Consumable/Option(IN/OUT), 3=Option(OUT QTY)
+        // --- LOGIKA PARSING BARU ---
+        parts := strings.Split(scannedValue, "_")
+        var materialCode, movement, binIDStr, qtyStr string
+        var binID, qtyInput int // qtyInput adalah 1 (default) atau angka dari format 4-bagian
+        var hasExplicitQty bool
 
-		if len(parts) == 2 {
-			materialCode = parts[0]
-			movement = strings.ToUpper(parts[1])
-			scanFormat = 1 // [MaterialCode]_IN or [MaterialCode]_OUT
-		} else if len(parts) == 3 {
-			materialCode = parts[0]
-			binIDStr = parts[1]
-			movement = strings.ToUpper(parts[2])
-			scanFormat = 2 // [MaterialCode]_[BinID]_IN or [MaterialCode]_[BinID]_OUT
-		} else if len(parts) == 4 {
-			materialCode = parts[0]
-			binIDStr = parts[1]
-			movement = strings.ToUpper(parts[2])
-			qtyStr = parts[3]
-			scanFormat = 3 // [MaterialCode]_[BinID]_OUT_[Qty]
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'", scannedValue)})
-			return
-		}
+        if len(parts) == 3 { // Format: MAT_MOVE_BIN
+            materialCode = parts[0]
+            movement = strings.ToUpper(parts[1])
+            binIDStr = parts[2]
+            qtyInput = 1      // Default 1 (berlaku untuk 1 bin, 1 pack, atau 1 pcs)
+            hasExplicitQty = false
+        } else if len(parts) == 4 { // Format: MAT_MOVE_BIN_QTY
+            materialCode = parts[0]
+            movement = strings.ToUpper(parts[1])
+            binIDStr = parts[2]
+            qtyStr = parts[3]
+            hasExplicitQty = true
+            
+            var err error
+            qtyInput, err = strconv.Atoi(qtyStr)
+            if err != nil || qtyInput <= 0 {
+                c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Qty salah: '%s' (dari scan '%s')", qtyStr, scannedValue)})
+                return
+            }
+        } else {
+            c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s' (perlu 3 or 4 bagian)", scannedValue)})
+            return
+        }
 
-		if materialCode == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Material ID kosong dari scan: '%s'", scannedValue)})
-			return
-		}
-		if movement != "IN" && movement != "OUT" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Movement scan salah: '%s' (perlu IN atau OUT)", movement)})
-			return
-		}
-
-		var m Material
-		err := tx.QueryRow(
-			`SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type
-			 FROM materials 
-			 WHERE material_code = $1 
-			 FOR UPDATE`,
-			materialCode,
-		).Scan(&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity, &m.MinBinQty, &m.MaterialCode, &m.ProductType)
-
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Material tidak ditemukan: %s (dari scan '%s')", materialCode, scannedValue)})
-				return
-			}
-			log.Printf("Error querying material %s: %v", materialCode, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
-			return
-		}
-
-		var newTotalQuantity int
-		var binStockChange int = 0
-
-		if scanFormat == 1 {
-			if m.ProductType != "kanban" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Material %s adalah tipe '%s', perlu scan per bin (e.g., %s_1_IN)", scannedValue, m.MaterialCode, m.ProductType, m.MaterialCode)})
-				return
-			}
-
-			if movement == "IN" {
-				newTotalQuantity = m.CurrentQuantity + m.PackQuantity
-				if newTotalQuantity > m.MaxBinQty {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Bin penuh (akan menjadi %d dari max %d)", m.MaterialCode, newTotalQuantity, m.MaxBinQty)})
-					return
-				}
-				binStockChange = m.PackQuantity
-			} else { // OUT
-				newTotalQuantity = m.CurrentQuantity - m.PackQuantity
-				if newTotalQuantity < 0 {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s): Stok tidak mencukupi (akan menjadi %d)", m.MaterialCode, newTotalQuantity)})
-					return
-				}
-				binStockChange = -m.PackQuantity
-			}
-		} else {
-			if m.ProductType == "kanban" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Material %s adalah tipe 'kanban', tidak perlu ID bin", scannedValue, m.MaterialCode)})
-				return
-			}
-
-			binID, err := strconv.Atoi(binIDStr)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Bin ID salah: '%s' (dari scan '%s')", binIDStr, scannedValue)})
-				return
-			}
-
-			var currentBinStock int
-			var maxBinStock int // = quantity per bin
-			err = tx.QueryRow(
-				`SELECT current_bin_stock, max_bin_stock FROM material_bins
-				 WHERE material_id = $1 AND bin_sequence_id = $2
-				 FOR UPDATE`,
-				m.ID, binID,
-			).Scan(&currentBinStock, &maxBinStock)
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Bin %d untuk material %s tidak ditemukan", binID, m.MaterialCode)})
-					return
-				}
-				log.Printf("Error querying bin stock %s-%d: %v", m.MaterialCode, binID, err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data stok bin"})
-				return
-			}
-
-			if m.ProductType == "consumable" {
-				if scanFormat == 3 {
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Tipe 'consumable' tidak mendukung scan per PCS", scannedValue)})
-					return
-				}
-				if movement == "IN" {
-					if currentBinStock > 0 {
-						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s Bin %d): Bin sudah terisi (stok %d)", m.MaterialCode, binID, currentBinStock)})
-						return
-					}
-					binStockChange = maxBinStock // Isi penuh bin
-					_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
-				} else { // OUT
-					if currentBinStock == 0 {
-						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s Bin %d): Bin sudah kosong", m.MaterialCode, binID)})
-						return
-					}
-					binStockChange = -currentBinStock
-					_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = 0 WHERE material_id = $1 AND bin_sequence_id = $2", m.ID, binID)
-				}
-			} else if m.ProductType == "option" {
-				if movement == "IN" {
-					if scanFormat == 3 {
-						c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Scan IN untuk tipe 'option' tidak perlu Qty", scannedValue)})
-						return
-					}
-					if currentBinStock > 0 {
-						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s Bin %d): Bin sudah terisi (stok %d)", m.MaterialCode, binID, currentBinStock)})
-						return
-					}
-					binStockChange = maxBinStock // Isi penuh
-					_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
-				} else { // OUT
-					if scanFormat == 2 {
-						c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Scan OUT tipe 'option' perlu Qty PCS (e.g., %s_1_OUT_10)", scannedValue, m.MaterialCode)})
-						return
-					}
-
-					qty, _ := strconv.Atoi(qtyStr)
-					if qty <= 0 {
-						c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Qty scan salah: '%s' (harus > 0)", qtyStr)})
-						return
-					}
-
-					if currentBinStock < qty {
-						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s Bin %d): Stok tidak cukup (stok %d, butuh %d)", m.MaterialCode, binID, currentBinStock, qty)})
-						return
-					}
-
-					newBinStock := currentBinStock - qty
-					binStockChange = -qty
-					_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", newBinStock, m.ID, binID)
-				}
-			}
-
-			if err != nil {
-				log.Printf("Error updating bin stock %s-%d: %v", m.MaterialCode, binID, err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update stok bin"})
-				return
-			}
-			newTotalQuantity = m.CurrentQuantity + binStockChange
-		}
-
-		_, err = tx.Exec(
-			"UPDATE materials SET current_quantity = $1 WHERE id = $2",
-			newTotalQuantity, m.ID,
-		)
-		if err != nil {
-			log.Printf("Error updating total stock for %s: %v", m.MaterialCode, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update total stok"})
-			return
-		}
-
-		// Re-cek definisi reorder point
-		reorderPoint := m.MinBinQty
-		if m.ProductType == "kanban" {
-			// Untuk Kanban, reorder point (merah) adalah MinQty, dan MinQty = PackQty
-			// Tidak perlu perbandingan
-		} else if m.ProductType == "consumable" {
-			// Untuk Consumable, reorder point (merah) adalah MinQty, dan MinQty = PackQty
-			// Tidak perlu perbandingan
-		} else {
-			// Untuk Option, reorder point (merah) adalah MinQty (input user, rounded)
-			// Tidak perlu perbandingan
-		}
+        if materialCode == "" {
+            c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Material ID kosong dari scan: '%s'", scannedValue)})
+            return
+        }
+        if movement != "IN" && movement != "OUT" {
+            c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Movement scan salah: '%s' (perlu IN atau OUT)", movement)})
+            return
+        }
+        
+        binID, err := strconv.Atoi(binIDStr)
+        if err != nil || binID <= 0 {
+            c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Bin ID salah: '%s' (dari scan '%s')", binIDStr, scannedValue)})
+            return
+        }
+        // --- AKHIR LOGIKA PARSING BARU ---
 
 
-		if movement == "OUT" && newTotalQuantity <= reorderPoint {
-			log.Printf("--- TRIGGER VRO UNTUK: %s (Stok: %d, Titik Merah: %d) ---", m.MaterialCode, newTotalQuantity, reorderPoint)
-		}
+        var m Material
+        err = tx.QueryRow(
+            `SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type
+             FROM materials 
+             WHERE material_code = $1 
+             FOR UPDATE`, // Kunci baris material
+            materialCode,
+        ).Scan(&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity, &m.MinBinQty, &m.MaterialCode, &m.ProductType)
 
-	}
+        if err != nil {
+            if errors.Is(err, sql.ErrNoRows) {
+                c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Material tidak ditemukan: %s (dari scan '%s')", materialCode, scannedValue)})
+                return
+            }
+            log.Printf("Error querying material %s: %v", materialCode, err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
+            return
+        }
 
-	if err := tx.Commit(); err != nil {
-		log.Printf("Error committing transaction: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan transaksi"})
-		return
-	}
+        var binStockChangeInPcs int = 0
 
-	c.JSON(http.StatusOK, gin.H{"message": "Semua transaksi manual berhasil disimpan"})
+        // --- LOGIKA PROSES BARU ---
+        
+        if movement == "IN" {
+            // Aturan IN (Semua Tipe): Format 3-bagian, mengisi 1 bin penuh
+            if hasExplicitQty {
+                c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format IN salah: '%s'. Tidak perlu Qty (cth: %s_IN_%d)", scannedValue, m.MaterialCode, binID)})
+                return
+            }
+
+            var currentBinStock int
+            var maxBinStock int // = quantity per bin
+            
+            if m.ProductType == "kanban" {
+                maxBinStock = m.PackQuantity // Qty/Bin untuk Kanban = PackQty
+                // Untuk Kanban, kita tidak mengecek bin individu, hanya total
+                currentBinStock = -1 // Indikator untuk skip cek "bin penuh"
+            } else {
+                 err = tx.QueryRow(
+                    `SELECT current_bin_stock, max_bin_stock FROM material_bins
+                     WHERE material_id = $1 AND bin_sequence_id = $2
+                     FOR UPDATE`, // Kunci baris bin
+                    m.ID, binID,
+                ).Scan(&currentBinStock, &maxBinStock)
+                if err != nil {
+                     if errors.Is(err, sql.ErrNoRows) {
+                        c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Bin %d untuk material %s tidak ditemukan", binID, m.MaterialCode)})
+                        return
+                    }
+                    log.Printf("Error querying bin stock %s-%d: %v", m.MaterialCode, binID, err)
+                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data stok bin"})
+                    return
+                }
+            }
+            
+            if currentBinStock > 0 {
+                 c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s Bin %d): Bin sudah terisi (stok %d)", m.MaterialCode, binID, currentBinStock)})
+                 return
+            }
+
+            binStockChangeInPcs = maxBinStock // Isi penuh bin
+            
+            if m.CurrentQuantity + binStockChangeInPcs > m.MaxBinQty {
+                 c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Stok total akan melebihi Max (%d / %d)", m.MaterialCode, m.CurrentQuantity + binStockChangeInPcs, m.MaxBinQty)})
+                 return
+            }
+            
+            if m.ProductType != "kanban" {
+                 _, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
+                 if err != nil {
+                    log.Printf("Error updating bin stock %s-%d: %v", m.MaterialCode, binID, err)
+                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update stok bin"})
+                    return
+                 }
+            }
+
+        } else {
+            // --- LOGIKA OUT ---
+            if m.ProductType == "kanban" {
+                // Aturan Kanban: Format 3-bagian, mengurangi 1 bin (PackQty) dari total
+                if hasExplicitQty {
+                    c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format OUT salah: '%s'. Kanban tidak perlu Qty (cth: %s_OUT_%d)", scannedValue, m.MaterialCode, binID)})
+                    return
+                }
+                binStockChangeInPcs = -m.PackQuantity
+                
+                if m.CurrentQuantity + binStockChangeInPcs < 0 {
+                     c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s): Stok tidak mencukupi (akan menjadi %d)", m.MaterialCode, m.CurrentQuantity + binStockChangeInPcs)})
+                     return
+                }
+                // (Tidak ada update ke material_bins)
+
+            } else {
+                // Aturan Consumable / Option: Mengurangi N Packs / N Pcs dari bin
+                var currentBinStock int
+                var maxBinStock int
+                err = tx.QueryRow(
+                    `SELECT current_bin_stock, max_bin_stock FROM material_bins
+                     WHERE material_id = $1 AND bin_sequence_id = $2
+                     FOR UPDATE`, // Kunci baris bin
+                    m.ID, binID,
+                ).Scan(&currentBinStock, &maxBinStock)
+                if err != nil {
+                     if errors.Is(err, sql.ErrNoRows) {
+                        c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Bin %d untuk material %s tidak ditemukan", binID, m.MaterialCode)})
+                        return
+                    }
+                    log.Printf("Error querying bin stock %s-%d: %v", m.MaterialCode, binID, err)
+                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data stok bin"})
+                    return
+                }
+                
+                if currentBinStock == 0 {
+                    c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s Bin %d): Bin sudah kosong", m.MaterialCode, binID)})
+                    return
+                }
+
+                if m.ProductType == "consumable" {
+                    // qtyInput adalah jumlah PACKS
+                    binStockChangeInPcs = -(qtyInput * m.PackQuantity)
+                } else if m.ProductType == "option" {
+                    // qtyInput adalah jumlah PCS
+                    binStockChangeInPcs = -qtyInput
+                }
+                
+                if currentBinStock + binStockChangeInPcs < 0 {
+                     c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s Bin %d): Stok bin tidak cukup (stok %d, butuh %d)", m.MaterialCode, binID, currentBinStock, -binStockChangeInPcs)})
+                     return
+                }
+
+                newBinStock := currentBinStock + binStockChangeInPcs
+                _, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", newBinStock, m.ID, binID)
+                if err != nil {
+                    log.Printf("Error updating bin stock %s-%d: %v", m.MaterialCode, binID, err)
+                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update stok bin"})
+                    return
+                }
+            }
+        }
+        
+        // --- Update Total di tabel materials ---
+        newTotalQuantity := m.CurrentQuantity + binStockChangeInPcs
+        _, err = tx.Exec(
+            "UPDATE materials SET current_quantity = $1 WHERE id = $2",
+            newTotalQuantity, m.ID,
+        )
+        if err != nil {
+            log.Printf("Error updating total stock for %s: %v", m.MaterialCode, err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update total stok"})
+            return
+        }
+        
+        // Cek reorder point
+        if movement == "OUT" && newTotalQuantity <= m.MinBinQty {
+            log.Printf("--- TRIGGER VRO UNTUK: %s (Stok: %d, Titik Merah: %d) ---", m.MaterialCode, newTotalQuantity, m.MinBinQty)
+        }
+    }
+
+    if err := tx.Commit(); err != nil {
+        log.Printf("Error committing transaction: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan transaksi"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Semua transaksi manual berhasil disimpan"})
 }
 
 func getMaterialStatus(c *gin.Context) {
-	materialCode := c.Query("code")
-	if materialCode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Query 'code' dibutuhkan"})
-		return
-	}
+    materialCode := c.Query("code")
+    if materialCode == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Query 'code' dibutuhkan"})
+        return
+    }
 
-	var m Material
-	err := db.QueryRow(
-		`SELECT pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type
-		 FROM materials 
-		 WHERE material_code = $1`,
-		materialCode,
-	).Scan(&m.PackQuantity, &m.MaxBinQty, &m.MinBinQty, &m.CurrentQuantity, &m.ProductType)
+    var m Material
+    var quantityPerBin int
+    
+    // 1. Ambil data material utama
+    err := db.QueryRow(
+        `SELECT id, pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type
+         FROM materials 
+         WHERE material_code = $1`,
+        materialCode,
+    ).Scan(&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.MinBinQty, &m.CurrentQuantity, &m.ProductType)
 
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Material tidak ditemukan: %s", materialCode)})
-			return
-		}
-		log.Printf("Error querying material status %s: %v", materialCode, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
-		return
-	}
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Material tidak ditemukan: %s", materialCode)})
+            return
+        }
+        log.Printf("Error querying material status %s: %v", materialCode, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
+        return
+    }
 
-	var predictedMovement string
-	if m.CurrentQuantity >= m.MaxBinQty {
-		predictedMovement = "OUT"
-	} else {
-		predictedMovement = "IN"
-	}
+    // 2. Tentukan QuantityPerBin
+    if m.ProductType == "kanban" {
+        quantityPerBin = m.PackQuantity // Aturan Kanban: Qty/Bin = PackQty
+    } else {
+        // Untuk Consumable/Option, ambil Qty/Bin (max_bin_stock) dari bin pertama
+        err := db.QueryRow(
+            `SELECT max_bin_stock FROM material_bins WHERE material_id = $1 LIMIT 1`,
+            m.ID,
+        ).Scan(&quantityPerBin)
+        
+        if err != nil {
+             if errors.Is(err, sql.ErrNoRows) {
+                 // Tidak punya bin? Ini aneh, tapi kita fallback ke pack quantity
+                 quantityPerBin = m.PackQuantity
+                 log.Printf("Warning: Material non-kanban %s tidak memiliki data bin. Fallback Qty/Bin ke PackQty.", materialCode)
+             } else {
+                log.Printf("Error querying bin max_bin_stock for %s: %v", materialCode, err)
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
+                return
+             }
+        }
+    }
 
-	response := MaterialStatusResponse{
-		PackQuantity:      m.PackQuantity,
-		MaxBinQty:         m.MaxBinQty,
-		MinBinQty:         m.MinBinQty,
-		CurrentQuantity:   m.CurrentQuantity,
-		ProductType:       m.ProductType,
-		PredictedMovement: predictedMovement,
-	}
 
-	c.JSON(http.StatusOK, response)
+    var predictedMovement string
+    if m.CurrentQuantity >= m.MaxBinQty {
+        predictedMovement = "OUT"
+    } else {
+        predictedMovement = "IN"
+    }
+
+    response := MaterialStatusResponse{
+        PackQuantity:      m.PackQuantity,
+        MaxBinQty:         m.MaxBinQty,
+        MinBinQty:         m.MinBinQty,
+        CurrentQuantity:   m.CurrentQuantity,
+        ProductType:       m.ProductType,
+        PredictedMovement: predictedMovement,
+        QuantityPerBin:    quantityPerBin,
+    }
+
+    c.JSON(http.StatusOK, response)
 }
