@@ -532,7 +532,6 @@ func getMaterials(c *gin.Context) {
 		}
 
 		materials = append(materials, m)
-		// SELALU ambil bin, karena Kanban sekarang punya bin
 		materialIDs = append(materialIDs, m.ID)
 		materialMap[m.ID] = &materials[len(materials)-1]
 	}
@@ -644,7 +643,6 @@ func createMaterial(c *gin.Context) {
 		return
 	}
 
-	// SELALU buat bin, bahkan untuk Kanban
 	totalBins := m.MaxBinQty / m.PackQuantity
 	if totalBins > 0 {
 		stmt, err := tx.Prepare(`
@@ -779,7 +777,6 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
-	// SELALU buat ulang bin, bahkan untuk Kanban
 	totalBinsInPayload := m.MaxBinQty / m.PackQuantity
 
 	stmt, err := tx.Prepare(`
@@ -932,13 +929,13 @@ func scanAutoMaterials(c *gin.Context) {
 
 		parts := strings.Split(scannedValue, "_")
 		var materialCode, binIDStr, movement, qtyStr string
-		var scanFormat int
+		var scanFormat int 
 
 		if len(parts) == 3 {
 			materialCode = parts[0]
 			movement = strings.ToUpper(parts[1])
 			binIDStr = parts[2]
-			scanFormat = 1
+			scanFormat = 1 
 			if movement != "IN" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Format 3 bagian hanya untuk _IN_", scannedValue)})
 				return
@@ -948,7 +945,7 @@ func scanAutoMaterials(c *gin.Context) {
 			movement = strings.ToUpper(parts[1])
 			binIDStr = parts[2]
 			qtyStr = parts[3]
-			scanFormat = 3 /
+			scanFormat = 3 
 			if movement != "OUT" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format scan salah: '%s'. Format 4 bagian hanya untuk _OUT_", scannedValue)})
 				return
@@ -991,7 +988,6 @@ func scanAutoMaterials(c *gin.Context) {
 		var newTotalQuantity int
 		var binStockChange int = 0
 
-		// --- Ambil data bin yang dituju ---
 		var currentBinStock int
 		err = tx.QueryRow(
 			`SELECT current_bin_stock FROM material_bins
@@ -1022,7 +1018,7 @@ func scanAutoMaterials(c *gin.Context) {
 			binStockChange = m.PackQuantity
 			_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", m.PackQuantity, m.ID, binID)
 
-		} else if scanFormat == 3 {
+		} else if scanFormat == 3 { 
 			qtyFromScan, err := strconv.Atoi(qtyStr)
 			if err != nil || qtyFromScan <= 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Qty scan salah: '%s' (harus > 0)", qtyStr)})
@@ -1035,7 +1031,7 @@ func scanAutoMaterials(c *gin.Context) {
 			} else if m.ProductType == "consumable" {
 				packs := qtyFromScan
 				qtyToRemove = packs * m.PackQuantity
-			} else { 
+			} else {
 				pcs := qtyFromScan
 				qtyToRemove = pcs
 			}
@@ -1051,7 +1047,7 @@ func scanAutoMaterials(c *gin.Context) {
 
 			if m.ProductType == "kanban" && currentBinStock > 0 {
 				newBinStock := 0
-				binStockChange = -currentBinStock 
+				binStockChange = -currentBinStock
 				_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", newBinStock, m.ID, binID)
 			} else {
 				newBinStock := currentBinStock - qtyToRemove
