@@ -592,7 +592,6 @@ func getMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, materials)
 }
-
 func createMaterial(c *gin.Context) {
 	var m Material
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -613,13 +612,15 @@ func createMaterial(c *gin.Context) {
 		m.ProductType = "kanban"
 	}
 
+	if m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Max Bin Qty (%d) harus merupakan kelipatan dari Pack Quantity (%d)", m.MaxBinQty, m.PackQuantity)})
+		return
+	}
+
 	// Validasi berdasarkan aturan baru
 	if m.ProductType == "kanban" {
-		// Untuk Kanban: max harus kelipatan pack (karena min=pack dan bin=max/min)
-		if m.MaxBinQty%m.PackQuantity != 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "[Kanban] Max Bin Qty harus merupakan kelipatan dari Pack Quantity"})
-			return
-		}
+		// Validasi kelipatan sudah dipindah ke atas
+		// (Sebelumnya ada cek 'm.MaxBinQty%m.PackQuantity != 0' di sini)
 	} else {
 		// Untuk Consumable/Option: bins harus disediakan
 		if m.Bins == nil || len(m.Bins) == 0 {
@@ -639,18 +640,17 @@ func createMaterial(c *gin.Context) {
 			}
 			for _, bin := range m.Bins {
 				if bin.MaxBinStock != qtyPerBin {
-					 c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Qty/Bin: Semua bin harus memiliki maxBinStock yang sama"})
-					 return
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Qty/Bin: Semua bin harus memiliki maxBinStock yang sama"})
+					return
 				}
 			}
 		} else if m.MaxBinQty != 0 {
-			// Jika MaxBinQty > 0 tapi Bins array kosong
-			 c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Data: Max Qty > 0 tetapi tidak ada data bin."})
-			 return
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Data: Max Qty > 0 tetapi tidak ada data bin."})
+			return
 		}
 	}
 
-	m.CurrentQuantity = 0 // Selalu 0 saat create
+	m.CurrentQuantity = 0 
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -662,11 +662,11 @@ func createMaterial(c *gin.Context) {
 
 	err = tx.QueryRow(
 		`INSERT INTO materials (
-			material_code, material_description, location, 
-			pack_quantity, max_bin_qty, min_bin_qty, 
-			vendor_code, current_quantity, product_type
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id`,
+            material_code, material_description, location, 
+            pack_quantity, max_bin_qty, min_bin_qty, 
+            vendor_code, current_quantity, product_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
@@ -680,11 +680,11 @@ func createMaterial(c *gin.Context) {
 
 	if m.ProductType != "kanban" && len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
-			INSERT INTO material_bins 
-			(material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
-			VALUES ($1, $2, $3, $4)
-			RETURNING id
-		`)
+            INSERT INTO material_bins 
+            (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+        `)
 		if err != nil {
 			log.Printf("Error preparing bin statement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan insert bin"})
@@ -693,15 +693,13 @@ func createMaterial(c *gin.Context) {
 		defer stmt.Close()
 
 		for i, bin := range m.Bins {
-			// Gunakan bin data dari payload
 			var binID int
-			err := stmt.QueryRow(m.ID, bin.BinSequenceID, bin.MaxBinStock, 0).Scan(&binID) // Selalu 0 stock saat create
+			err := stmt.QueryRow(m.ID, bin.BinSequenceID, bin.MaxBinStock, 0).Scan(&binID) 
 			if err != nil {
 				log.Printf("Error inserting bin: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat bin material"})
 				return
 			}
-			// Update data di response
 			m.Bins[i].ID = binID
 			m.Bins[i].MaterialID = m.ID
 			m.Bins[i].CurrentBinStock = 0
@@ -716,7 +714,6 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
-
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	var m Material
@@ -760,12 +757,19 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
+	// --- PERBAIKAN ---
+	// Validasi constraint database (check_pack_is_factor_of_max)
+	// Ini harus berlaku untuk SEMUA tipe produk, bukan hanya 'kanban',
+	// jadi dipindahkan ke luar blok 'if'.
+	if m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Max Bin Qty (%d) harus merupakan kelipatan dari Pack Quantity (%d)", m.MaxBinQty, m.PackQuantity)})
+		return
+	}
+	// -----------------
+
 	// Validasi berdasarkan aturan baru
 	if m.ProductType == "kanban" {
-		if m.MaxBinQty%m.PackQuantity != 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("[Kanban] Max Bin Qty (%d) harus merupakan kelipatan dari Pack Quantity (%d)", m.MaxBinQty, m.PackQuantity)})
-			return
-		}
+		// (Validasi kelipatan sudah dipindah ke atas)
 		if m.CurrentQuantity > m.MaxBinQty {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
 			return
@@ -810,8 +814,8 @@ func updateMaterial(c *gin.Context) {
 				calculatedTotalStock += bin.CurrentBinStock
 			}
 		} else if m.MaxBinQty != 0 {
-			 c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Data: Max Qty > 0 tetapi tidak ada data bin."})
-			 return
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Inkonsistensi Data: Max Qty > 0 tetapi tidak ada data bin."})
+			return
 		}
 
 		if m.CurrentQuantity != calculatedTotalStock {
@@ -830,16 +834,16 @@ func updateMaterial(c *gin.Context) {
 
 	_, err = tx.Exec(
 		`UPDATE materials SET 
-			material_code = $1, 
-			material_description = $2, 
-			location = $3, 
-			pack_quantity = $4, 
-			max_bin_qty = $5, 
-			min_bin_qty = $6, 
-			vendor_code = $7,
-			current_quantity = $8,
-			product_type = $9
-		WHERE id = $10`,
+            material_code = $1, 
+            material_description = $2, 
+            location = $3, 
+            pack_quantity = $4, 
+            max_bin_qty = $5, 
+            min_bin_qty = $6, 
+            vendor_code = $7,
+            current_quantity = $8,
+            product_type = $9
+        WHERE id = $10`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
@@ -862,10 +866,10 @@ func updateMaterial(c *gin.Context) {
 
 	if m.ProductType != "kanban" && len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
-			INSERT INTO material_bins 
-			(material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
-			VALUES ($1, $2, $3, $4)
-		`)
+            INSERT INTO material_bins 
+            (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
+            VALUES ($1, $2, $3, $4)
+        `)
 		if err != nil {
 			log.Printf("Error preparing bin statement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan insert bin"})
