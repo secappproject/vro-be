@@ -495,89 +495,101 @@ func deleteVendor(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
-func getMaterialStatus(c *gin.Context) {
-    materialCode := c.Query("code")
-    if materialCode == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Query 'code' dibutuhkan"})
-        return
-    }
-
-    var m Material
-    var quantityPerBin int
-    var bins []MaterialBin // <-- TAMBAHAN BARU
-
-    err := db.QueryRow(
-        `SELECT id, pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type
-         FROM materials 
-         WHERE material_code = $1`,
-        materialCode,
-    ).Scan(&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.MinBinQty, &m.CurrentQuantity, &m.ProductType)
-
+func getMaterials(c *gin.Context) {
+    rows, err := db.Query(`
+            SELECT id, material_code, material_description, location, 
+                pack_quantity, max_bin_qty, min_bin_qty, 
+                vendor_code, current_quantity, product_type
+            FROM materials 
+            ORDER BY material_code
+        `)
     if err != nil {
-        // ... (handling error not found)
-        if errors.Is(err, sql.ErrNoRows) {
-            c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Material tidak ditemukan: %s", materialCode)})
-            return
-        }
-        log.Printf("Error querying material status %s: %v", materialCode, err)
+        log.Printf("Error querying materials: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
         return
     }
+    defer rows.Close()
 
-    bins = make([]MaterialBin, 0) // <-- INISIALISASI
+    materials := make([]Material, 0)
+    materialIDs := make([]int, 0) 
+    materialMap := make(map[int]*Material)
 
-    if m.ProductType == "kanban" {
-        quantityPerBin = m.PackQuantity
-    } else {
-        // --- AMBIL SEMUA DATA BIN ---
-        binRows, err := db.Query(
-            `SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
-             FROM material_bins WHERE material_id = $1 ORDER BY bin_sequence_id`,
-            m.ID,
-        )
+    for rows.Next() {
+        var m Material
+        if err := rows.Scan(
+            &m.ID,
+            &m.MaterialCode,
+            &m.MaterialDescription,
+            &m.Location,
+            &m.PackQuantity,
+            &m.MaxBinQty,
+            &m.MinBinQty,
+            &m.VendorCode,
+            &m.CurrentQuantity,
+            &m.ProductType,
+        ); err != nil {
+            log.Printf("Error scanning material: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data material"})
+            return
+        }
+
+        materials = append(materials, m)
+        if m.ProductType != "kanban" {
+            materialIDs = append(materialIDs, m.ID) 
+            materialMap[m.ID] = &materials[len(materials)-1]
+        }
+    }
+    if err := rows.Err(); err != nil {
+        log.Printf("Error during material rows iteration: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Terjadi kesalahan saat memproses data material"})
+        return
+    }
+
+    if len(materialIDs) > 0 {
+        query := `
+                SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
+                FROM material_bins
+                WHERE material_id = ANY($1)
+                ORDER BY material_id, bin_sequence_id
+            `
+
+        binRows, err := db.Query(query, pq.Array(materialIDs))
         if err != nil {
-            log.Printf("Error querying bins for %s: %v", materialCode, err)
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
+            log.Printf("Error querying material bins: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin"})
             return
         }
         defer binRows.Close()
 
         for binRows.Next() {
             var b MaterialBin
-            if err := binRows.Scan(&b.ID, &b.MaterialID, &b.BinSequenceID, &b.MaxBinStock, &b.CurrentBinStock); err != nil {
-                 log.Printf("Error scanning bin for %s: %v", materialCode, err)
-                 c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin"})
-                 return
+            if err := binRows.Scan(
+                &b.ID,
+                &b.MaterialID,
+                &b.BinSequenceID,
+                &b.MaxBinStock,
+                &b.CurrentBinStock,
+            ); err != nil {
+                log.Printf("Error scanning material bin: %v", err)
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data bin"})
+                return
             }
-            bins = append(bins, b) 
+
+            if material, ok := materialMap[b.MaterialID]; ok {
+                if material.Bins == nil {
+                    material.Bins = make([]MaterialBin, 0)
+                }
+                material.Bins = append(material.Bins, b)
+            }
         }
-
-        if len(bins) > 0 {
-            quantityPerBin = bins[0].MaxBinStock 
-        } else {
-            quantityPerBin = m.PackQuantity 
+        if err := binRows.Err(); err != nil {
+            log.Printf("Error during bin rows iteration: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Terjadi kesalahan saat memproses data bin"})
+            return
         }
     }
 
-    var predictedMovement string
-    if m.CurrentQuantity >= m.MaxBinQty {
-        predictedMovement = "OUT"
-    } else {
-        predictedMovement = "IN"
-    }
-
-    response := MaterialStatusResponse{
-        PackQuantity:      m.PackQuantity,
-        MaxBinQty:         m.MaxBinQty,
-        MinBinQty:         m.MinBinQty,
-        CurrentQuantity:   m.CurrentQuantity,
-        ProductType:       m.ProductType,
-        PredictedMovement: predictedMovement,
-        QuantityPerBin:    quantityPerBin,
-        Bins:              bins,
-    }
-
-    c.JSON(http.StatusOK, response)
+    c.JSON(http.StatusOK, materials)
 }
 func createMaterial(c *gin.Context) {
 	var m Material
@@ -1168,7 +1180,6 @@ func scanAutoMaterials(c *gin.Context) {
 
     c.JSON(http.StatusOK, gin.H{"message": "Semua transaksi manual berhasil disimpan"})
 }
-
 func getMaterialStatus(c *gin.Context) {
     materialCode := c.Query("code")
     if materialCode == "" {
@@ -1178,8 +1189,8 @@ func getMaterialStatus(c *gin.Context) {
 
     var m Material
     var quantityPerBin int
-    
-    // 1. Ambil data material utama
+    var bins []MaterialBin // <-- Ini penting
+
     err := db.QueryRow(
         `SELECT id, pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type
          FROM materials 
@@ -1197,27 +1208,42 @@ func getMaterialStatus(c *gin.Context) {
         return
     }
 
-    // 2. Tentukan QuantityPerBin
+    bins = make([]MaterialBin, 0) // <-- Ini penting
+
     if m.ProductType == "kanban" {
-        quantityPerBin = m.PackQuantity // Aturan Kanban: Qty/Bin = PackQty
+        quantityPerBin = m.PackQuantity
     } else {
-        // Untuk Consumable/Option, ambil Qty/Bin (max_bin_stock) dari bin pertama
-        err := db.QueryRow(
-            `SELECT max_bin_stock FROM material_bins WHERE material_id = $1 LIMIT 1`,
+        // --- AMBIL SEMUA DATA BIN ---
+        binRows, err := db.Query(
+            `SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
+             FROM material_bins WHERE material_id = $1 ORDER BY bin_sequence_id`,
             m.ID,
-        ).Scan(&quantityPerBin)
-        
+        )
         if err != nil {
-             if errors.Is(err, sql.ErrNoRows) {
-                 // Tidak punya bin? Ini aneh, tapi kita fallback ke pack quantity
-                 quantityPerBin = m.PackQuantity
-                 log.Printf("Warning: Material non-kanban %s tidak memiliki data bin. Fallback Qty/Bin ke PackQty.", materialCode)
-             } else {
-                log.Printf("Error querying bin max_bin_stock for %s: %v", materialCode, err)
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
-                return
-             }
+            log.Printf("Error querying bins for %s: %v", materialCode, err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
+            return
         }
+        defer binRows.Close()
+
+        for binRows.Next() {
+            var b MaterialBin
+            if err := binRows.Scan(&b.ID, &b.MaterialID, &b.BinSequenceID, &b.MaxBinStock, &b.CurrentBinStock); err != nil {
+                 log.Printf("Error scanning bin for %s: %v", materialCode, err)
+                 c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin"})
+                 return
+            }
+            bins = append(bins, b) 
+        }
+        
+        if len(bins) > 0 {
+            quantityPerBin = bins[0].MaxBinStock 
+        } else {
+            // Fallback jika tidak ada bin (seharusnya tidak terjadi jika data benar)
+            quantityPerBin = m.PackQuantity 
+             log.Printf("Warning: Material non-kanban %s tidak memiliki data bin. Fallback Qty/Bin ke PackQty.", materialCode)
+        }
+        // ------------------------
     }
 
 
@@ -1236,6 +1262,7 @@ func getMaterialStatus(c *gin.Context) {
         ProductType:       m.ProductType,
         PredictedMovement: predictedMovement,
         QuantityPerBin:    quantityPerBin,
+        Bins:              bins, // <-- Ini penting
     }
 
     c.JSON(http.StatusOK, response)
