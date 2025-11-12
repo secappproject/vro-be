@@ -126,20 +126,20 @@ func main() {
 	config := cors.Config{
 		AllowOrigins:     []string{"https://vro-fe.vercel.app", "http://localhost:3000", "http://localhost:3001"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role", "X-User-Company"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}
 	router.Use(cors.New(config))
 	api := router.Group("/api")
+	api.Use(AuthMiddleware())
 
 	{
 		api.POST("/login", loginUser)
 
 		users := api.Group("/users")
-		users.Use(AuthMiddleware())
-		users.Use(AdminAuthMiddleware())
+		users.Use(SuperuserOnlyAuthMiddleware())
 		{
 			users.GET("/", getUsers)
 			users.POST("/", createUser)
@@ -149,27 +149,24 @@ func main() {
 
 		api.GET("/vendor-type", getVendorTypes)
 		api.GET("/companies", getCompanies)
+
 		vendors := api.Group("/vendors")
-		vendors.Use(AuthMiddleware())
-		vendors.Use(AdminAuthMiddleware())
 		{
-			vendors.GET("/", getVendors)
-			vendors.POST("/", createVendor)
-			vendors.PUT("/:id", updateVendor)
-			vendors.DELETE("/:id", deleteVendor)
+			vendors.GET("/", AdminOrSuperuserAuthMiddleware(), getVendors)
+			vendors.POST("/", SuperuserOnlyAuthMiddleware(), createVendor)
+			vendors.PUT("/:id", SuperuserOnlyAuthMiddleware(), updateVendor)
+			vendors.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteVendor)
 		}
 
 		materials := api.Group("/materials")
-		materials.Use(AuthMiddleware())
-		materials.Use(AdminAuthMiddleware())
-
 		{
 			materials.GET("/", getMaterials)
-			materials.POST("/", createMaterial)
-			materials.PUT("/:id", updateMaterial)
-			materials.DELETE("/:id", deleteMaterial)
-			materials.POST("/scan/auto", scanAutoMaterials)
 			materials.GET("/status", getMaterialStatus)
+			materials.POST("/scan/auto", ScanAuthMiddleware(), scanAutoMaterials)
+
+			materials.POST("/", SuperuserOnlyAuthMiddleware(), createMaterial)
+			materials.PUT("/:id", SuperuserOnlyAuthMiddleware(), updateMaterial)
+			materials.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteMaterial)
 		}
 	}
 	router.GET("/", func(c *gin.Context) {
@@ -230,21 +227,62 @@ func AuthMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if c.Request.URL.Path == "/api/login" {
+			c.Next()
+			return
+		}
 
 		role := c.GetHeader("X-User-Role")
 		if role == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Header X-User-Role dibutuhkan"})
 			return
 		}
+		validRoles := map[string]bool{
+			"Superuser": true,
+			"Admin":     true,
+			"Vendor":    true,
+			"Viewer":    true,
+		}
+		if !validRoles[role] {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Role tidak valid: " + role})
+			return
+		}
+
 		c.Next()
 	}
 }
 
-func AdminAuthMiddleware() gin.HandlerFunc {
+func SuperuserOnlyAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := c.GetHeader("X-User-Role")
-		if role != "Admin" && role != "admin" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Admin yang diizinkan"})
+		if role != "Superuser" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Superuser yang diizinkan"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func AdminOrSuperuserAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetHeader("X-User-Role")
+		if role != "Admin" && role != "Superuser" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Admin atau Superuser yang diizinkan"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func ScanAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetHeader("X-User-Role")
+		if role == "Viewer" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Viewer tidak diizinkan melakukan scan"})
+			return
+		}
+		if role != "Superuser" && role != "Admin" && role != "Vendor" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak"})
 			return
 		}
 		c.Next()
@@ -286,7 +324,7 @@ func createUser(c *gin.Context) {
 		return
 	}
 
-	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+	if req.Role == "Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
 		return
 	}
@@ -326,7 +364,7 @@ func updateUser(c *gin.Context) {
 		return
 	}
 
-	if req.Role == "External/Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
+	if req.Role == "Vendor" && (!req.CompanyName.Valid || req.CompanyName.String == "") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Nama Perusahaan (Company Name) dibutuhkan untuk role Vendor"})
 		return
 	}
@@ -499,14 +537,31 @@ func deleteVendor(c *gin.Context) {
 }
 
 func getMaterials(c *gin.Context) {
-	rows, err := db.Query(`
-            SELECT id, material_code, material_description, location, 
-                pack_quantity, max_bin_qty, min_bin_qty, 
-                vendor_code, current_quantity, product_type,
-                vendor_stock
-            FROM materials 
-            ORDER BY material_code
-        `)
+	role := c.GetHeader("X-User-Role")
+	companyName := c.GetHeader("X-User-Company")
+
+	baseQuery := `
+        SELECT id, material_code, material_description, location, 
+            pack_quantity, max_bin_qty, min_bin_qty, 
+            vendor_code, current_quantity, product_type,
+            vendor_stock
+        FROM materials
+    `
+	var queryParams []interface{}
+	
+	if role == "Vendor" {
+		if companyName == "" {
+			log.Println("Peringatan: Role Vendor memanggil getMaterials tanpa X-User-Company")
+			c.JSON(http.StatusForbidden, gin.H{"error": "Akses vendor ditolak: company name tidak ada"})
+			return
+		}
+		baseQuery += " WHERE vendor_code = $1 ORDER BY material_code"
+		queryParams = append(queryParams, companyName)
+	} else {
+		baseQuery += " ORDER BY material_code"
+	}
+
+	rows, err := db.Query(baseQuery, queryParams...)
 	if err != nil {
 		log.Printf("Error querying materials: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
@@ -597,7 +652,6 @@ func getMaterials(c *gin.Context) {
 	c.JSON(http.StatusOK, materials)
 }
 
-// DIPERBARUI: createMaterial
 func createMaterial(c *gin.Context) {
 	var m Material
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -609,12 +663,10 @@ func createMaterial(c *gin.Context) {
 		m.ProductType = "kanban"
 	}
 
-	// --- PERUBAHAN LOGIKA OPTION ---
 	if m.ProductType == "option" {
 		m.PackQuantity = 1
 		m.MinBinQty = 1
 	}
-	// -------------------------------
 
 	if m.PackQuantity <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus lebih besar dari 0"})
@@ -729,7 +781,6 @@ func createMaterial(c *gin.Context) {
 	c.JSON(http.StatusCreated, m)
 }
 
-// DIPERBARUI: updateMaterial
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	var m Material
@@ -742,12 +793,10 @@ func updateMaterial(c *gin.Context) {
 		m.ProductType = "kanban"
 	}
 
-	// --- PERUBAHAN LOGIKA OPTION ---
 	if m.ProductType == "option" {
 		m.PackQuantity = 1
 		m.MinBinQty = 1
 	}
-	// -------------------------------
 
 	var oldQty int
 	var oldProductType string
@@ -915,8 +964,10 @@ func updateMaterial(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
 
-// DIPERBARUI: scanAutoMaterials
 func scanAutoMaterials(c *gin.Context) {
+	role := c.GetHeader("X-User-Role")
+	companyName := c.GetHeader("X-User-Company")
+	
 	var scannedValues []string
 	if err := c.ShouldBindJSON(&scannedValues); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
@@ -985,7 +1036,7 @@ func scanAutoMaterials(c *gin.Context) {
 		var m Material
 		err = tx.QueryRow(
 			`SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type,
-             vendor_stock
+             vendor_stock, vendor_code
              FROM materials 
              WHERE material_code = $1 
              FOR UPDATE`,
@@ -993,7 +1044,7 @@ func scanAutoMaterials(c *gin.Context) {
 		).Scan(
 			&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity, &m.MinBinQty,
 			&m.MaterialCode, &m.ProductType,
-			&m.VendorStock,
+			&m.VendorStock, &m.VendorCode,
 		)
 
 		if err != nil {
@@ -1005,6 +1056,18 @@ func scanAutoMaterials(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
 			return
 		}
+		
+		if role == "Vendor" {
+			if companyName == "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Akses vendor ditolak: company name tidak ada"})
+				return
+			}
+			if m.VendorCode != companyName {
+				c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Akses ditolak: Vendor %s tidak diizinkan scan material %s (Vendor: %s)", companyName, m.MaterialCode, m.VendorCode)})
+				return
+			}
+		}
+
 
 		var binStockChangeInPcs int = 0
 		var newVendorStock int = m.VendorStock
@@ -1020,7 +1083,7 @@ func scanAutoMaterials(c *gin.Context) {
 
 			if m.ProductType == "kanban" {
 				maxBinStock = m.PackQuantity
-				currentBinStock = -1 // Indikator untuk 'kanban' (tidak perlu cek bin)
+				currentBinStock = -1
 			} else {
 				err = tx.QueryRow(
 					`SELECT current_bin_stock, max_bin_stock FROM material_bins
@@ -1067,20 +1130,20 @@ func scanAutoMaterials(c *gin.Context) {
 				}
 			}
 
-		} else { // MOVEMENT == "OUT"
+		} else {
 			if m.ProductType == "kanban" {
 				if hasExplicitQty {
 					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format OUT salah: '%s'. Kanban tidak perlu Qty (cth: %s_OUT_%d)", scannedValue, m.MaterialCode, binID)})
 					return
 				}
-				binStockChangeInPcs = -m.PackQuantity // Kanban selalu 1 Pack
+				binStockChangeInPcs = -m.PackQuantity
 
 				if m.CurrentQuantity+binStockChangeInPcs < 0 {
 					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s): Stok tidak mencukupi (akan menjadi %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs)})
 					return
 				}
 
-			} else { // Consumable or Option
+			} else {
 				var currentBinStock int
 				var maxBinStock int
 				err = tx.QueryRow(
@@ -1104,10 +1167,7 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 
-				// --- PERUBAHAN LOGIKA OPTION ---
-				// Keduanya (Consumable dan Option) sekarang menggunakan PackQuantity
 				binStockChangeInPcs = -(qtyInput * m.PackQuantity)
-				// -------------------------------
 
 				if currentBinStock+binStockChangeInPcs < 0 {
 					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s Bin %d): Stok bin tidak cukup (stok %d, butuh %d)", m.MaterialCode, binID, currentBinStock, -binStockChangeInPcs)})

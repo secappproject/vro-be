@@ -176,3 +176,127 @@ ADD COLUMN vendor_stock INT DEFAULT 0;
 
 -- Pesan sukses
 SELECT '✅ Tabel users, vendors, dan materials berhasil dibuat dan diisi data dummy (diperbaiki).';
+
+
+-- Pastikan semua perintah dieksekusi dalam satu transaksi
+BEGIN;
+
+-- 1. Buat Tipe ENUM baru yang diinginkan
+CREATE TYPE user_role_new AS ENUM ('Superuser', 'Admin', 'Vendor', 'Viewer');
+
+-- 2. Hapus semua user KECUALI 'admin' yang akan dimigrasi
+DELETE FROM users WHERE username != 'admin';
+
+-- 3. Tambah kolom sementara (nullable) dengan Tipe ENUM baru
+ALTER TABLE users ADD COLUMN role_new user_role_new;
+
+-- 4. KOREKSI: Ubah username 'admin' -> 'superuser' DAN role-nya -> 'Superuser'
+UPDATE users 
+SET 
+    username = 'superuser', -- Tambahkan baris ini
+    role_new = 'Superuser' 
+WHERE 
+    username = 'admin';
+
+-- 5. Hapus kolom 'role' yang lama (yang masih pakai ENUM lama 'user_role')
+ALTER TABLE users DROP COLUMN role;
+
+-- 6. Hapus Tipe ENUM yang lama (sekarang sudah tidak terpakai)
+DROP TYPE user_role;
+
+-- 7. Ubah nama kolom baru ('role_new') menjadi 'role'
+ALTER TABLE users RENAME COLUMN role_new TO role;
+
+-- 8. Ubah nama Tipe ENUM baru ('user_role_new') menjadi 'user_role' (nama standar)
+ALTER TYPE user_role_new RENAME TO user_role;
+
+-- 9. Pastikan kolom 'role' sekarang NOT NULL (karena 'superuser' sudah diisi)
+ALTER TABLE users ALTER COLUMN role SET NOT NULL;
+
+-- 10. Insert user-user baru sesuai permintaan
+INSERT INTO users (username, password, role) VALUES 
+('admin', 'adminpass', 'Admin'),
+('viewer', 'viewerpass', 'Viewer');
+
+-- (Asumsi vendor 'ABACUS' sudah ada dari data dummy sebelumnya)
+INSERT INTO users (username, password, role, company_name, vendor_type) VALUES 
+('vendor_abacus', 'vendorpass', 'Vendor', 'ABACUS', 'Panel');
+
+-- Selesaikan transaksi
+COMMIT;
+
+SELECT '✅ Migrasi role user berhasil: User ''admin'' lama -> ''superuser'', user baru (admin, viewer, vendor) ditambahkan.';
+
+INSERT INTO users (username, password, role, company_name, vendor_type)
+SELECT 
+    'vendor_' || v.company_name AS username,
+    'vendorpass' AS password,
+    'Vendor'::user_role AS role,
+    v.company_name,
+    v.vendor_type
+FROM 
+    vendors v
+WHERE 
+    NOT EXISTS (
+        -- Cek apakah sudah ada user 'Vendor' dengan company_name ini
+        SELECT 1 
+        FROM users u 
+        WHERE u.company_name = v.company_name AND u.role = 'Vendor'
+    )
+ON CONFLICT (username) DO NOTHING; -- Jika username 'vendor_...' sudah ada, lewati
+
+DELETE FROM 
+    vendors v
+WHERE 
+    -- Tidak ada user yang terkait dengan vendor ini
+    NOT EXISTS (
+        SELECT 1 
+        FROM users u 
+        WHERE u.company_name = v.company_name
+    ) 
+AND 
+    -- Tidak ada material yang terkait dengan vendor ini
+    NOT EXISTS (
+        SELECT 1 
+        FROM materials m 
+        WHERE m.vendor_code = v.company_name
+    );
+
+UPDATE users
+SET 
+    username = 'vendor_' || TRIM(BOTH '_' FROM REGEXP_REPLACE(
+        -- Ganti 2+ underscore jadi 1 (cth: 'cv__globalindo' -> 'cv_globalindo')
+        REGEXP_REPLACE(
+            -- Ganti semua non-alfanumerik jadi '_' (cth: 'cv. globalindo' -> 'cv__globalindo')
+            LOWER(company_name), 
+            '[^a-z0-9]', 
+            '_', 
+            'g'
+        ), 
+        '_{2,}', 
+        '_', 
+        'g'
+    ))
+WHERE 
+    role = 'Vendor'
+    AND company_name IS NOT NULL;
+
+
+UPDATE users
+SET 
+    username = LOWER(
+        array_to_string(
+            (
+                -- 3. Pisah nama yang sudah bersih menjadi array kata
+                string_to_array(
+                    -- 2. Hapus 'cv.' atau 'pt.' (case-insensitive) dari awal
+                    TRIM(REGEXP_REPLACE(company_name, '^(cv\.|pt\.)\s*', '', 'i')), 
+                    ' ' -- Pemisah adalah spasi
+                )
+            )[1:2], -- 4. Ambil hanya 2 elemen pertama dari array
+            '_' -- 5. Gabungkan 2 elemen itu dengan '_'
+        )
+    )
+WHERE 
+    role = 'Vendor'
+    AND company_name IS NOT NULL;
