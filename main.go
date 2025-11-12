@@ -139,12 +139,11 @@ func main() {
 		api.POST("/login", loginUser)
 
 		users := api.Group("/users")
-		users.Use(SuperuserOnlyAuthMiddleware())
 		{
-			users.GET("/", getUsers)
-			users.POST("/", createUser)
-			users.PUT("/:id", updateUser)
-			users.DELETE("/:id", deleteUser)
+			users.GET("/", AdminOrSuperuserAuthMiddleware(), getUsers)
+			users.POST("/", SuperuserOnlyAuthMiddleware(), createUser)
+			users.PUT("/:id", SuperuserOnlyAuthMiddleware(), updateUser)
+			users.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteUser)
 		}
 
 		api.GET("/vendor-type", getVendorTypes)
@@ -548,7 +547,7 @@ func getMaterials(c *gin.Context) {
         FROM materials
     `
 	var queryParams []interface{}
-	
+
 	if role == "Vendor" {
 		if companyName == "" {
 			log.Println("Peringatan: Role Vendor memanggil getMaterials tanpa X-User-Company")
@@ -967,7 +966,7 @@ func updateMaterial(c *gin.Context) {
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
-	
+
 	var scannedValues []string
 	if err := c.ShouldBindJSON(&scannedValues); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
@@ -1056,7 +1055,7 @@ func scanAutoMaterials(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data material"})
 			return
 		}
-		
+
 		if role == "Vendor" {
 			if companyName == "" {
 				c.JSON(http.StatusForbidden, gin.H{"error": "Akses vendor ditolak: company name tidak ada"})
@@ -1067,7 +1066,6 @@ func scanAutoMaterials(c *gin.Context) {
 				return
 			}
 		}
-
 
 		var binStockChangeInPcs int = 0
 		var newVendorStock int = m.VendorStock
