@@ -118,6 +118,8 @@ CHECK (
     OR 
     (product_type <> 'kanban' AND current_quantity % pack_quantity = 0)
 );
+ALTER TABLE materials
+ADD COLUMN vendor_stock INT DEFAULT 0;
 --=================================================================
 -- DATA DUMMY (Vendors & Users)
 --=================================================================
