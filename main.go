@@ -164,7 +164,8 @@ func main() {
 			materials.POST("/scan/auto", ScanAuthMiddleware(), scanAutoMaterials)
 
 			materials.POST("/", SuperuserOnlyAuthMiddleware(), createMaterial)
-			materials.PUT("/:id", SuperuserOnlyAuthMiddleware(), updateMaterial)
+			// Perubahan: Menggunakan MaterialEditAuthMiddleware agar Admin & Vendor bisa edit
+			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
 			materials.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteMaterial)
 		}
 	}
@@ -282,6 +283,17 @@ func ScanAuthMiddleware() gin.HandlerFunc {
 		}
 		if role != "Superuser" && role != "Admin" && role != "Vendor" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func MaterialEditAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetHeader("X-User-Role")
+		if role != "Superuser" && role != "Admin" && role != "Vendor" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Hanya Superuser, Admin, atau Vendor yang diizinkan"})
 			return
 		}
 		c.Next()
@@ -782,6 +794,9 @@ func createMaterial(c *gin.Context) {
 
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
+	role := c.GetHeader("X-User-Role")
+	companyName := c.GetHeader("X-User-Company")
+
 	var m Material
 	if err := c.ShouldBindJSON(&m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
@@ -799,7 +814,9 @@ func updateMaterial(c *gin.Context) {
 
 	var oldQty int
 	var oldProductType string
-	err := db.QueryRow("SELECT current_quantity, product_type FROM materials WHERE id = $1", id).Scan(&oldQty, &oldProductType)
+	var oldVendorCode string
+
+	err := db.QueryRow("SELECT current_quantity, product_type, vendor_code FROM materials WHERE id = $1", id).Scan(&oldQty, &oldProductType, &oldVendorCode)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Material tidak ditemukan"})
@@ -808,6 +825,18 @@ func updateMaterial(c *gin.Context) {
 		log.Printf("Error querying old stock: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi stok lama"})
 		return
+	}
+
+	if role == "Vendor" {
+		if companyName == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Identitas perusahaan tidak ditemukan"})
+			return
+		}
+		if oldVendorCode != companyName {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Anda tidak dapat mengedit material vendor lain"})
+			return
+		}
+		m.VendorCode = companyName
 	}
 
 	if m.CurrentQuantity != oldQty && m.PIC == "" {
