@@ -327,3 +327,6 @@ CREATE TABLE IF NOT EXISTS download_logs (
     username VARCHAR(255) NOT NULL,
     timestamp TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE materials
+ADD COLUMN open_po INT DEFAULT 0;

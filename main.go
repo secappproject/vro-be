@@ -992,6 +992,21 @@ func updateMaterial(c *gin.Context) {
 		}
 	}
 
+	if vendorStockChanged {
+		change := m.VendorStock - oldVendorStock
+		_, errLog := tx.Exec(
+			`INSERT INTO stock_movements 
+             (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+             VALUES ($1, $2, 'Edit Vendor Stock', $3, $4, $5, $6, 'Manual Vendor Stock Edit', NULL)`,
+			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC,
+		)
+		if errLog != nil {
+			log.Printf("Error logging vendor stock movement: %v", errLog)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor"})
+			return
+		}
+	}
+
 	_, err = tx.Exec(
 		`UPDATE materials SET 
             material_code = $1, 
