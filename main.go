@@ -106,6 +106,15 @@ type StockMovement struct {
 	Timestamp      time.Time `json:"timestamp"`
 }
 
+type DownloadLogRequest struct {
+	Username string `json:"username" binding:"required"`
+}
+
+type DownloadLog struct {
+	Username  string    `json:"username"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 var db *sql.DB
 
 func main() {
@@ -181,6 +190,12 @@ func main() {
 			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
 			materials.GET("/:id/movements", getStockMovements)
 			materials.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteMaterial)
+		}
+
+		logs := api.Group("/logs")
+		{
+			logs.POST("/download", recordDownload)
+			logs.GET("/last-download", getLastDownload)
 		}
 	}
 	router.GET("/", func(c *gin.Context) {
@@ -1471,4 +1486,47 @@ func deleteMaterial(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil dihapus (stok 0)"})
+}
+
+func recordDownload(c *gin.Context) {
+	var req DownloadLogRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username dibutuhkan"})
+		return
+	}
+
+	_, err := db.Exec(
+		`INSERT INTO download_logs (username) VALUES ($1)`,
+		req.Username,
+	)
+
+	if err != nil {
+		log.Printf("Error logging download: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat log download"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Log download berhasil dicatat"})
+}
+
+func getLastDownload(c *gin.Context) {
+	var logEntry DownloadLog
+
+	err := db.QueryRow(
+		`SELECT username, timestamp FROM download_logs
+		 ORDER BY timestamp DESC
+		 LIMIT 1`,
+	).Scan(&logEntry.Username, &logEntry.Timestamp)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusOK, nil)
+			return
+		}
+		log.Printf("Error fetching last download log: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil log terakhir"})
+		return
+	}
+
+	c.JSON(http.StatusOK, logEntry)
 }

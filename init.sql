@@ -321,3 +321,9 @@ CREATE INDEX idx_stock_movements_timestamp ON stock_movements(timestamp);
 
 ALTER TABLE stock_movements
 ADD COLUMN bin_sequence_id INT NULL;
+
+CREATE TABLE IF NOT EXISTS download_logs (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    timestamp TIMESTAMPTZ DEFAULT NOW()
+);
