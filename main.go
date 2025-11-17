@@ -826,7 +826,6 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
-
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	role := c.GetHeader("X-User-Role")
@@ -997,7 +996,7 @@ func updateMaterial(c *gin.Context) {
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
              (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-             VALUES ($1, $2, 'Edit Vendor Stock', $3, $4, $5, $6, 'Manual Vendor Stock Edit', NULL)`,
+             VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
 			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC,
 		)
 		if errLog != nil {
@@ -1072,6 +1071,7 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
+
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1230,7 +1230,6 @@ func scanAutoMaterials(c *gin.Context) {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Stok total akan melebihi Max (%d / %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs, m.MaxBinQty)})
 				return
 			}
-
 			newVendorStock = m.VendorStock - binStockChangeInPcs
 			if m.ProductType != "kanban" {
 				_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
@@ -1336,14 +1335,14 @@ func scanAutoMaterials(c *gin.Context) {
 			_, errLogVendor := tx.Exec(
 				`INSERT INTO stock_movements 
                     (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-                    VALUES ($1, $2, 'Edit Vendor Stock', $3, $4, $5, $6, $7, NULL)`,
+                    VALUES ($1, $2, 'Scan IN Vendor', $3, $4, $5, $6, $7, NULL)`,
 				m.ID,
 				m.MaterialCode,
 				vendorStockChange,
 				oldVendorStock,
 				newVendorStock,
 				pic,
-				"Otomatis dari Scan IN",
+				"Vendor Stock (dari Scan IN)",
 			)
 			if errLogVendor != nil {
 				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
