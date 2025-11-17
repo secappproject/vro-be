@@ -1559,6 +1559,13 @@ func deleteMaterial(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
+	_, err = tx.Exec("DELETE FROM stock_movements WHERE material_id = $1", id)
+	if err != nil {
+		log.Printf("Error deleting stock movements: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus histori material"})
+		return
+	}
+
 	_, err = tx.Exec("DELETE FROM material_bins WHERE material_id = $1", id)
 	if err != nil {
 		log.Printf("Error deleting material bins: %v", err)
