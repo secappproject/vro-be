@@ -1072,7 +1072,6 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
-
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1231,6 +1230,7 @@ func scanAutoMaterials(c *gin.Context) {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Stok total akan melebihi Max (%d / %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs, m.MaxBinQty)})
 				return
 			}
+
 			newVendorStock = m.VendorStock - binStockChangeInPcs
 			if m.ProductType != "kanban" {
 				_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
@@ -1329,6 +1329,29 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
+		if movement == "IN" {
+			vendorStockChange := binStockChangeInPcs * -1
+			oldVendorStock := m.VendorStock
+
+			_, errLogVendor := tx.Exec(
+				`INSERT INTO stock_movements 
+                    (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                    VALUES ($1, $2, 'Edit Vendor Stock', $3, $4, $5, $6, $7, NULL)`,
+				m.ID,
+				m.MaterialCode,
+				vendorStockChange,
+				oldVendorStock,
+				newVendorStock,
+				pic,
+				"Otomatis dari Scan IN",
+			)
+			if errLogVendor != nil {
+				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor saat scan"})
+				return
+			}
+		}
+
 		if movement == "OUT" && newTotalQuantity <= m.MinBinQty {
 			log.Printf("--- TRIGGER VRO UNTUK: %s (Stok: %d, Titik Merah: %d) ---", m.MaterialCode, newTotalQuantity, m.MinBinQty)
 		}
@@ -1342,6 +1365,7 @@ func scanAutoMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Semua transaksi manual berhasil disimpan"})
 }
+
 func getMaterialStatus(c *gin.Context) {
 	materialCode := c.Query("code")
 	if materialCode == "" {
