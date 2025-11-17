@@ -300,3 +300,24 @@ SET
 WHERE 
     role = 'Vendor'
     AND company_name IS NOT NULL;
+
+
+CREATE TABLE stock_movements (
+    id SERIAL PRIMARY KEY,
+    material_id INT NOT NULL REFERENCES materials(id),
+    material_code VARCHAR(255) NOT NULL,
+    movement_type VARCHAR(50) NOT NULL, -- Cth: 'Edit', 'Scan IN', 'Scan OUT'
+    quantity_change INT NOT NULL,      -- Cth: +24, -12, -1
+    old_quantity INT NOT NULL,
+    new_quantity INT NOT NULL,
+    pic VARCHAR(255) NOT NULL,         -- Siapa yang melakukan
+    notes TEXT,                        -- Opsional, cth: 'Scan Bin 5'
+    timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Opsional: Buat index untuk mempercepat query
+CREATE INDEX idx_stock_movements_material_id ON stock_movements(material_id);
+CREATE INDEX idx_stock_movements_timestamp ON stock_movements(timestamp);
+
+ALTER TABLE stock_movements
+ADD COLUMN bin_sequence_id INT NULL;
