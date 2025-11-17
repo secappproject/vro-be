@@ -69,6 +69,7 @@ type Material struct {
 	PIC                 string        `json:"pic"`
 	ProductType         string        `json:"productType"`
 	VendorStock         int           `json:"vendorStock"`
+	OpenPO              int           `json:"openPO"`
 	Bins                []MaterialBin `json:"bins,omitempty"`
 }
 
@@ -82,6 +83,7 @@ type MaterialStatusResponse struct {
 	QuantityPerBin    int           `json:"quantityPerBin"`
 	Bins              []MaterialBin `json:"bins,omitempty"`
 	VendorStock       int           `json:"vendorStock"`
+	OpenPO            int           `json:"openPO"`
 }
 
 type MaterialBin struct {
@@ -93,17 +95,17 @@ type MaterialBin struct {
 }
 
 type StockMovement struct {
-	ID             int       `json:"id"`
-	MaterialID     int       `json:"materialId"`
-	MaterialCode   string    `json:"materialCode"`
-	MovementType   string    `json:"movementType"`
-	QuantityChange int       `json:"quantityChange"`
-	OldQuantity    int       `json:"oldQuantity"`
-	NewQuantity    int       `json:"newQuantity"`
-	PIC            string    `json:"pic"`
+	ID             int            `json:"id"`
+	MaterialID     int            `json:"materialId"`
+	MaterialCode   string         `json:"materialCode"`
+	MovementType   string         `json:"movementType"`
+	QuantityChange int            `json:"quantityChange"`
+	OldQuantity    int            `json:"oldQuantity"`
+	NewQuantity    int            `json:"newQuantity"`
+	PIC            string         `json:"pic"`
 	Notes          sql.NullString `json:"notes"`
-	BinSequenceID  sql.NullInt64  `json:"binSequenceId,omitempty"` 
-	Timestamp      time.Time `json:"timestamp"`
+	BinSequenceID  sql.NullInt64  `json:"binSequenceId,omitempty"`
+	Timestamp      time.Time      `json:"timestamp"`
 }
 
 type DownloadLogRequest struct {
@@ -149,7 +151,8 @@ func main() {
 	config := cors.Config{
 		AllowOrigins:     []string{"https://vro-fe.vercel.app", "http://localhost:3000", "http://localhost:3001"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role", "X-User-Company", "X-User-Username"},		ExposeHeaders:    []string{"Content-Length"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role", "X-User-Company", "X-User-Username"},
+		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}
@@ -574,7 +577,6 @@ func deleteVendor(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
-
 func getMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -583,7 +585,7 @@ func getMaterials(c *gin.Context) {
         SELECT id, material_code, material_description, location, 
             pack_quantity, max_bin_qty, min_bin_qty, 
             vendor_code, current_quantity, product_type,
-            vendor_stock
+            vendor_stock, open_po
         FROM materials
     `
 	var queryParams []interface{}
@@ -626,6 +628,7 @@ func getMaterials(c *gin.Context) {
 			&m.CurrentQuantity,
 			&m.ProductType,
 			&m.VendorStock,
+			&m.OpenPO,
 		); err != nil {
 			log.Printf("Error scanning material: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data material"})
@@ -719,6 +722,10 @@ func createMaterial(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Vendor Stock tidak boleh negatif"})
 		return
 	}
+	if m.OpenPO < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Open PO tidak boleh negatif"})
+		return
+	}
 
 	if m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Max Bin Qty (%d) harus merupakan kelipatan dari Pack Quantity (%d)", m.MaxBinQty, m.PackQuantity)})
@@ -768,13 +775,13 @@ func createMaterial(c *gin.Context) {
             material_code, material_description, location, 
             pack_quantity, max_bin_qty, min_bin_qty, 
             vendor_code, current_quantity, product_type,
-            vendor_stock
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            vendor_stock, open_po
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
-		m.VendorStock,
+		m.VendorStock, m.OpenPO,
 	).Scan(&m.ID)
 
 	if err != nil {
@@ -819,6 +826,7 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
+
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	role := c.GetHeader("X-User-Role")
@@ -842,8 +850,14 @@ func updateMaterial(c *gin.Context) {
 	var oldQty int
 	var oldProductType string
 	var oldVendorCode string
+	var oldVendorStock int
+	var oldOpenPO int
 
-	err := db.QueryRow("SELECT current_quantity, product_type, vendor_code, material_code FROM materials WHERE id = $1", id).Scan(&oldQty, &oldProductType, &oldVendorCode, &m.MaterialCode)
+	err := db.QueryRow(
+		"SELECT current_quantity, product_type, vendor_code, material_code, vendor_stock, open_po FROM materials WHERE id = $1",
+		id,
+	).Scan(&oldQty, &oldProductType, &oldVendorCode, &m.MaterialCode, &oldVendorStock, &oldOpenPO)
+
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Material tidak ditemukan"})
@@ -866,16 +880,25 @@ func updateMaterial(c *gin.Context) {
 		m.VendorCode = companyName
 	}
 
-	if m.CurrentQuantity != oldQty && m.PIC == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "PIC (Nama Anda) wajib diisi saat mengubah Current Stock."})
+	stockChanged := m.CurrentQuantity != oldQty
+	vendorStockChanged := m.VendorStock != oldVendorStock
+	openPOChanged := m.OpenPO != oldOpenPO
+
+	if (stockChanged || vendorStockChanged || openPOChanged) && m.PIC == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "PIC (Nama Anda) wajib diisi saat mengubah Current Stock, Vendor Stock, atau Open PO."})
 		return
 	}
 
-	if m.CurrentQuantity != oldQty && m.PIC != "" {
+	if stockChanged && m.PIC != "" {
 		log.Printf("--- STOCK CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldQty, m.CurrentQuantity)
 	}
+	if vendorStockChanged && m.PIC != "" {
+		log.Printf("--- VENDOR STOCK CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldVendorStock, m.VendorStock)
+	}
+	if openPOChanged && m.PIC != "" {
+		log.Printf("--- OPEN PO CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldOpenPO, m.OpenPO)
+	}
 
-	// (Validasi sisa...)
 	if m.PackQuantity <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus lebih besar dari 0"})
 		return
@@ -886,6 +909,10 @@ func updateMaterial(c *gin.Context) {
 	}
 	if m.VendorStock < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Vendor Stock tidak boleh negatif"})
+		return
+	}
+	if m.OpenPO < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Open PO tidak boleh negatif"})
 		return
 	}
 	if m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
@@ -950,13 +977,12 @@ func updateMaterial(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
-	if m.CurrentQuantity != oldQty {
+	if stockChanged {
 		change := m.CurrentQuantity - oldQty
-		// **[DIUBAH] Menambahkan bin_sequence_id = NULL**
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
-			 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-			 VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Stock Edit', NULL)`, // <-- Tambah NULL
+             (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+             VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Stock Edit', NULL)`,
 			id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
 		)
 		if errLog != nil {
@@ -968,21 +994,22 @@ func updateMaterial(c *gin.Context) {
 
 	_, err = tx.Exec(
 		`UPDATE materials SET 
-			material_code = $1, 
-			material_description = $2, 
-			location = $3, 
-			pack_quantity = $4, 
-			max_bin_qty = $5, 
-			min_bin_qty = $6, 
-			vendor_code = $7,
-			current_quantity = $8,
-			product_type = $9,
-			vendor_stock = $10
-		WHERE id = $11`,
+            material_code = $1, 
+            material_description = $2, 
+            location = $3, 
+            pack_quantity = $4, 
+            max_bin_qty = $5, 
+            min_bin_qty = $6, 
+            vendor_code = $7,
+            current_quantity = $8,
+            product_type = $9,
+            vendor_stock = $10,
+            open_po = $11
+        WHERE id = $12`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
-		m.VendorStock,
+		m.VendorStock, m.OpenPO,
 		id,
 	)
 
@@ -1001,10 +1028,10 @@ func updateMaterial(c *gin.Context) {
 
 	if m.ProductType != "kanban" && len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
-			INSERT INTO material_bins 
-			(material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
-			VALUES ($1, $2, $3, $4)
-		`)
+            INSERT INTO material_bins 
+            (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
+            VALUES ($1, $2, $3, $4)
+        `)
 		if err != nil {
 			log.Printf("Error preparing bin statement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan insert bin"})
@@ -1030,10 +1057,11 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
+
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
-	username := c.GetHeader("X-User-Username") 
+	username := c.GetHeader("X-User-Username")
 
 	var pic string
 	if username != "" {
@@ -1113,15 +1141,15 @@ func scanAutoMaterials(c *gin.Context) {
 		var m Material
 		err = tx.QueryRow(
 			`SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type,
-					vendor_stock, vendor_code
-					FROM materials 
-					WHERE material_code = $1 
-					FOR UPDATE`,
+                    vendor_stock, vendor_code, open_po
+                    FROM materials 
+                    WHERE material_code = $1 
+                    FOR UPDATE`,
 			materialCode,
 		).Scan(
 			&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity, &m.MinBinQty,
 			&m.MaterialCode, &m.ProductType,
-			&m.VendorStock, &m.VendorCode,
+			&m.VendorStock, &m.VendorCode, &m.OpenPO,
 		)
 
 		if err != nil {
@@ -1157,12 +1185,12 @@ func scanAutoMaterials(c *gin.Context) {
 			var maxBinStock int
 			if m.ProductType == "kanban" {
 				maxBinStock = m.PackQuantity
-				currentBinStock = -1 
+				currentBinStock = -1
 			} else {
 				err = tx.QueryRow(
 					`SELECT current_bin_stock, max_bin_stock FROM material_bins
-						WHERE material_id = $1 AND bin_sequence_id = $2
-						FOR UPDATE`,
+                        WHERE material_id = $1 AND bin_sequence_id = $2
+                        FOR UPDATE`,
 					m.ID, binID,
 				).Scan(&currentBinStock, &maxBinStock)
 				if err != nil {
@@ -1197,7 +1225,7 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 			}
-		} else { 
+		} else {
 			if m.ProductType == "kanban" {
 				if hasExplicitQty {
 					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format OUT salah: '%s'. Kanban tidak perlu Qty (cth: %s_OUT_%d)", scannedValue, m.MaterialCode, binID)})
@@ -1208,13 +1236,13 @@ func scanAutoMaterials(c *gin.Context) {
 					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s): Stok tidak mencukupi (akan menjadi %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs)})
 					return
 				}
-			} else { 
+			} else {
 				var currentBinStock int
 				var maxBinStock int
 				err = tx.QueryRow(
 					`SELECT current_bin_stock, max_bin_stock FROM material_bins
-						WHERE material_id = $1 AND bin_sequence_id = $2
-						FOR UPDATE`,
+                        WHERE material_id = $1 AND bin_sequence_id = $2
+                        FOR UPDATE`,
 					m.ID, binID,
 				).Scan(&currentBinStock, &maxBinStock)
 				if err != nil {
@@ -1275,9 +1303,9 @@ func scanAutoMaterials(c *gin.Context) {
 
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
-				(material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			m.ID, m.MaterialCode, movementType, binStockChangeInPcs, oldTotalQuantity, newTotalQuantity, pic, notes, binID, // <-- pic sudah benar
+                (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			m.ID, m.MaterialCode, movementType, binStockChangeInPcs, oldTotalQuantity, newTotalQuantity, pic, notes, binID,
 		)
 
 		if errLog != nil {
@@ -1312,14 +1340,14 @@ func getMaterialStatus(c *gin.Context) {
 
 	err := db.QueryRow(
 		`SELECT id, pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type,
-         vendor_stock
+         vendor_stock, open_po
          FROM materials 
          WHERE material_code = $1`,
 		materialCode,
 	).Scan(
 		&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.MinBinQty,
 		&m.CurrentQuantity, &m.ProductType,
-		&m.VendorStock,
+		&m.VendorStock, &m.OpenPO,
 	)
 
 	if err != nil {
@@ -1384,6 +1412,7 @@ func getMaterialStatus(c *gin.Context) {
 		QuantityPerBin:    quantityPerBin,
 		Bins:              bins,
 		VendorStock:       m.VendorStock,
+		OpenPO:            m.OpenPO,
 	}
 
 	c.JSON(http.StatusOK, response)
