@@ -1034,10 +1034,16 @@ func updateMaterial(c *gin.Context) {
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
+	username := c.GetHeader("X-User-Username") 
 
-	pic := role
-	if role != "Superuser" && companyName != "" {
-		pic = fmt.Sprintf("%s (%s)", role, companyName)
+	var pic string
+	if username != "" {
+		pic = username
+	} else {
+		pic = role
+		if role != "Superuser" && companyName != "" {
+			pic = fmt.Sprintf("%s (%s)", role, companyName)
+		}
 	}
 
 	var scannedValues []string
@@ -1099,7 +1105,7 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		binID, err := strconv.Atoi(binIDStr) 
+		binID, err := strconv.Atoi(binIDStr)
 		if err != nil || binID <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Bin ID salah: '%s' (dari scan '%s')", binIDStr, scannedValue)})
 			return
@@ -1108,10 +1114,10 @@ func scanAutoMaterials(c *gin.Context) {
 		var m Material
 		err = tx.QueryRow(
 			`SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type,
-			 vendor_stock, vendor_code
-			 FROM materials 
-			 WHERE material_code = $1 
-			 FOR UPDATE`,
+					vendor_stock, vendor_code
+					FROM materials 
+					WHERE material_code = $1 
+					FOR UPDATE`,
 			materialCode,
 		).Scan(
 			&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity, &m.MinBinQty,
@@ -1152,12 +1158,12 @@ func scanAutoMaterials(c *gin.Context) {
 			var maxBinStock int
 			if m.ProductType == "kanban" {
 				maxBinStock = m.PackQuantity
-				currentBinStock = -1
+				currentBinStock = -1 
 			} else {
 				err = tx.QueryRow(
 					`SELECT current_bin_stock, max_bin_stock FROM material_bins
-					 WHERE material_id = $1 AND bin_sequence_id = $2
-					 FOR UPDATE`,
+						WHERE material_id = $1 AND bin_sequence_id = $2
+						FOR UPDATE`,
 					m.ID, binID,
 				).Scan(&currentBinStock, &maxBinStock)
 				if err != nil {
@@ -1192,7 +1198,7 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 			}
-		} else {
+		} else { 
 			if m.ProductType == "kanban" {
 				if hasExplicitQty {
 					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format OUT salah: '%s'. Kanban tidak perlu Qty (cth: %s_OUT_%d)", scannedValue, m.MaterialCode, binID)})
@@ -1203,13 +1209,13 @@ func scanAutoMaterials(c *gin.Context) {
 					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan OUT (%s): Stok tidak mencukupi (akan menjadi %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs)})
 					return
 				}
-			} else {
+			} else { 
 				var currentBinStock int
 				var maxBinStock int
 				err = tx.QueryRow(
 					`SELECT current_bin_stock, max_bin_stock FROM material_bins
-					 WHERE material_id = $1 AND bin_sequence_id = $2
-					 FOR UPDATE`,
+						WHERE material_id = $1 AND bin_sequence_id = $2
+						FOR UPDATE`,
 					m.ID, binID,
 				).Scan(&currentBinStock, &maxBinStock)
 				if err != nil {
@@ -1270,9 +1276,9 @@ func scanAutoMaterials(c *gin.Context) {
 
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
-			 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			m.ID, m.MaterialCode, movementType, binStockChangeInPcs, oldTotalQuantity, newTotalQuantity, pic, notes, binID, // <-- Tambah binID
+				(material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			m.ID, m.MaterialCode, movementType, binStockChangeInPcs, oldTotalQuantity, newTotalQuantity, pic, notes, binID, // <-- pic sudah benar
 		)
 
 		if errLog != nil {
