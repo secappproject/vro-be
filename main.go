@@ -577,6 +577,7 @@ func deleteVendor(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
+
 func getMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -612,7 +613,8 @@ func getMaterials(c *gin.Context) {
 
 	materials := make([]Material, 0)
 	materialIDs := make([]int, 0)
-	materialMap := make(map[int]*Material)
+
+	materialMap := make(map[int]int)
 
 	for rows.Next() {
 		var m Material
@@ -638,7 +640,8 @@ func getMaterials(c *gin.Context) {
 		materials = append(materials, m)
 		if m.ProductType != "kanban" {
 			materialIDs = append(materialIDs, m.ID)
-			materialMap[m.ID] = &materials[len(materials)-1]
+
+			materialMap[m.ID] = len(materials) - 1
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -677,11 +680,11 @@ func getMaterials(c *gin.Context) {
 				return
 			}
 
-			if material, ok := materialMap[b.MaterialID]; ok {
-				if material.Bins == nil {
-					material.Bins = make([]MaterialBin, 0)
+			if index, ok := materialMap[b.MaterialID]; ok {
+				if materials[index].Bins == nil {
+					materials[index].Bins = make([]MaterialBin, 0)
 				}
-				material.Bins = append(material.Bins, b)
+				materials[index].Bins = append(materials[index].Bins, b)
 			}
 		}
 		if err := binRows.Err(); err != nil {
