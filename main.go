@@ -1285,6 +1285,7 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 			}
+			newVendorStock = m.VendorStock + (binStockChangeInPcs * -1)
 		}
 
 		oldTotalQuantity := m.CurrentQuantity
@@ -1343,6 +1344,27 @@ func scanAutoMaterials(c *gin.Context) {
 				newVendorStock,
 				pic,
 				"Vendor Stock (dari Scan IN)",
+			)
+			if errLogVendor != nil {
+				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor saat scan"})
+				return
+			}
+		} else if movement == "OUT" {
+			vendorStockChange := binStockChangeInPcs * -1
+			oldVendorStock := m.VendorStock
+
+			_, errLogVendor := tx.Exec(
+				`INSERT INTO stock_movements 
+                    (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                    VALUES ($1, $2, 'Scan OUT Vendor', $3, $4, $5, $6, $7, NULL)`,
+				m.ID,
+				m.MaterialCode,
+				vendorStockChange,
+				oldVendorStock,
+				newVendorStock,
+				pic,
+				"Vendor Stock (dari Scan OUT)",
 			)
 			if errLogVendor != nil {
 				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
