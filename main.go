@@ -1074,7 +1074,6 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
-
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1156,6 +1155,7 @@ func scanAutoMaterials(c *gin.Context) {
 		}
 
 		var m Material
+
 		err = tx.QueryRow(
 			`SELECT id, pack_quantity, max_bin_qty, current_quantity, min_bin_qty, material_code, product_type,
                     vendor_stock, vendor_code, open_po
@@ -1192,6 +1192,7 @@ func scanAutoMaterials(c *gin.Context) {
 
 		var binStockChangeInPcs int = 0
 		var newVendorStock int = m.VendorStock
+		var newOpenPO int = m.OpenPO
 
 		if movement == "IN" {
 			if hasExplicitQty {
@@ -1224,16 +1225,27 @@ func scanAutoMaterials(c *gin.Context) {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s Bin %d): Bin sudah terisi (stok %d)", m.MaterialCode, binID, currentBinStock)})
 				return
 			}
+
 			binStockChangeInPcs = maxBinStock
+
 			if m.VendorStock < binStockChangeInPcs {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Vendor Stock tidak cukup (Stok: %d, Butuh: %d)", m.MaterialCode, m.VendorStock, binStockChangeInPcs)})
 				return
 			}
+
+			if m.OpenPO < binStockChangeInPcs {
+				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Open PO tidak cukup (Open PO: %d, Butuh: %d)", m.MaterialCode, m.OpenPO, binStockChangeInPcs)})
+				return
+			}
+
 			if m.CurrentQuantity+binStockChangeInPcs > m.MaxBinQty {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Gagal Scan IN (%s): Stok total akan melebihi Max (%d / %d)", m.MaterialCode, m.CurrentQuantity+binStockChangeInPcs, m.MaxBinQty)})
 				return
 			}
+
 			newVendorStock = m.VendorStock - binStockChangeInPcs
+			newOpenPO = m.OpenPO - binStockChangeInPcs
+
 			if m.ProductType != "kanban" {
 				_, err = tx.Exec("UPDATE material_bins SET current_bin_stock = $1 WHERE material_id = $2 AND bin_sequence_id = $3", maxBinStock, m.ID, binID)
 				if err != nil {
@@ -1243,6 +1255,7 @@ func scanAutoMaterials(c *gin.Context) {
 				}
 			}
 		} else {
+
 			if m.ProductType == "kanban" {
 				if hasExplicitQty {
 					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Format OUT salah: '%s'. Kanban tidak perlu Qty (cth: %s_OUT_%d)", scannedValue, m.MaterialCode, binID)})
@@ -1288,16 +1301,19 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 			}
+
 			newVendorStock = m.VendorStock + (binStockChangeInPcs * -1)
+			newOpenPO = m.OpenPO + (binStockChangeInPcs * -1)
 		}
 
 		oldTotalQuantity := m.CurrentQuantity
 		newTotalQuantity := oldTotalQuantity + binStockChangeInPcs
 
 		_, err = tx.Exec(
-			"UPDATE materials SET current_quantity = $1, vendor_stock = $2 WHERE id = $3",
+			"UPDATE materials SET current_quantity = $1, vendor_stock = $2, open_po = $3 WHERE id = $4",
 			newTotalQuantity,
 			newVendorStock,
+			newOpenPO,
 			m.ID,
 		)
 
@@ -1332,48 +1348,60 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
+		var movementTypeVendor string
+		var notesVendor string
+
 		if movement == "IN" {
-			vendorStockChange := binStockChangeInPcs * -1
-			oldVendorStock := m.VendorStock
+			movementTypeVendor = "Scan IN Vendor"
+			notesVendor = "Vendor Stock (dari Scan IN)"
+		} else {
+			movementTypeVendor = "Scan OUT Vendor"
+			notesVendor = "Vendor Stock (dari Scan OUT)"
+		}
 
-			_, errLogVendor := tx.Exec(
-				`INSERT INTO stock_movements 
-                    (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-                    VALUES ($1, $2, 'Scan IN Vendor', $3, $4, $5, $6, $7, NULL)`,
-				m.ID,
-				m.MaterialCode,
-				vendorStockChange,
-				oldVendorStock,
-				newVendorStock,
-				pic,
-				"Vendor Stock (dari Scan IN)",
-			)
-			if errLogVendor != nil {
-				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor saat scan"})
-				return
-			}
-		} else if movement == "OUT" {
-			vendorStockChange := binStockChangeInPcs * -1
-			oldVendorStock := m.VendorStock
+		vendorStockChange := binStockChangeInPcs * -1
 
-			_, errLogVendor := tx.Exec(
-				`INSERT INTO stock_movements 
-                    (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-                    VALUES ($1, $2, 'Scan OUT Vendor', $3, $4, $5, $6, $7, NULL)`,
-				m.ID,
-				m.MaterialCode,
-				vendorStockChange,
-				oldVendorStock,
-				newVendorStock,
-				pic,
-				"Vendor Stock (dari Scan OUT)",
-			)
-			if errLogVendor != nil {
-				log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor saat scan"})
-				return
-			}
+		_, errLogVendor := tx.Exec(
+			`INSERT INTO stock_movements 
+                (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)`,
+			m.ID,
+			m.MaterialCode,
+			movementTypeVendor,
+			vendorStockChange,
+			m.VendorStock,
+			newVendorStock,
+			pic,
+			notesVendor,
+		)
+		if errLogVendor != nil {
+			log.Printf("Error logging vendor stock movement during scan: %v", errLogVendor)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor saat scan"})
+			return
+		}
+
+		var movementTypeOpenPO string
+		if movement == "IN" {
+			movementTypeOpenPO = "Scan IN OpenPO"
+		} else {
+			movementTypeOpenPO = "Scan OUT OpenPO"
+		}
+
+		_, errLogOpenPO := tx.Exec(
+			`INSERT INTO stock_movements 
+                (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 'Auto System', NULL)`,
+			m.ID,
+			m.MaterialCode,
+			movementTypeOpenPO,
+			vendorStockChange,
+			m.OpenPO,
+			newOpenPO,
+			pic,
+		)
+		if errLogOpenPO != nil {
+			log.Printf("Error logging open po movement: %v", errLogOpenPO)
+
 		}
 
 		if movement == "OUT" && newTotalQuantity <= m.MinBinQty {
