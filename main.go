@@ -1244,7 +1244,6 @@ func scanAutoMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Scan berhasil"})
 }
-
 func getMaterialStatus(c *gin.Context) {
 	materialCode := c.Query("code")
 	if materialCode == "" {
