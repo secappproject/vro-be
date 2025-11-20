@@ -787,11 +787,13 @@ func updateMaterial(c *gin.Context) {
 	var oldVendorCode string
 	var oldVendorStock int
 	var oldOpenPO int
+	var oldMaterialCode string // Tambahkan variabel penampung baru
 
+	// FIX: Scan ke variable oldMaterialCode, JANGAN ke &m.MaterialCode
 	err := db.QueryRow(
 		"SELECT current_quantity, product_type, vendor_code, material_code, vendor_stock, open_po FROM materials WHERE id = $1",
 		id,
-	).Scan(&oldQty, &oldProductType, &oldVendorCode, &m.MaterialCode, &oldVendorStock, &oldOpenPO)
+	).Scan(&oldQty, &oldProductType, &oldVendorCode, &oldMaterialCode, &oldVendorStock, &oldOpenPO)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -863,7 +865,6 @@ func updateMaterial(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity tidak boleh negatif"})
 			return
 		}
-		// Validation for kanban consistency if bins are provided
 		if len(m.Bins) > 0 {
 			calculatedTotal := 0
 			for _, bin := range m.Bins {
@@ -992,7 +993,6 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
-	// Updated: Allow saving bins for Kanban too
 	if len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
             INSERT INTO material_bins 
@@ -1024,7 +1024,6 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
-
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
