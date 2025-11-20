@@ -1194,7 +1194,6 @@ func scanAutoMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Scan berhasil"})
 }
-
 func getMaterialStatus(c *gin.Context) {
 	materialCode := c.Query("code")
 	if materialCode == "" {
@@ -1203,12 +1202,9 @@ func getMaterialStatus(c *gin.Context) {
 	}
 
 	var m Material
-	var quantityPerBin int
-	var bins []MaterialBin
-
 	err := db.QueryRow(
-		`SELECT id, pack_quantity, max_bin_qty, min_bin_qty, current_quantity, product_type,
-         vendor_stock, open_po
+		`SELECT id, pack_quantity, max_bin_qty, min_bin_qty, 
+                current_quantity, product_type, vendor_stock, open_po
          FROM materials 
          WHERE material_code = $1`,
 		materialCode,
@@ -1228,46 +1224,41 @@ func getMaterialStatus(c *gin.Context) {
 		return
 	}
 
-	bins = make([]MaterialBin, 0)
+	bins := make([]MaterialBin, 0)
 
-	if m.ProductType == "kanban" {
-		quantityPerBin = m.PackQuantity
-	} else {
-		binRows, err := db.Query(
-			`SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
-             FROM material_bins WHERE material_id = $1 ORDER BY bin_sequence_id`,
-			m.ID,
-		)
-		if err != nil {
-			log.Printf("Error querying bins for %s: %v", materialCode, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
+	binRows, err := db.Query(
+		`SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
+         FROM material_bins 
+         WHERE material_id = $1 
+         ORDER BY bin_sequence_id`,
+		m.ID,
+	)
+	if err != nil {
+		log.Printf("Error querying bins for %s: %v", materialCode, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin material"})
+		return
+	}
+	defer binRows.Close()
+
+	for binRows.Next() {
+		var b MaterialBin
+		if err := binRows.Scan(&b.ID, &b.MaterialID, &b.BinSequenceID,
+			&b.MaxBinStock, &b.CurrentBinStock); err != nil {
+			log.Printf("Error scanning bin for %s: %v", materialCode, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin"})
 			return
 		}
-		defer binRows.Close()
-
-		for binRows.Next() {
-			var b MaterialBin
-			if err := binRows.Scan(&b.ID, &b.MaterialID, &b.BinSequenceID, &b.MaxBinStock, &b.CurrentBinStock); err != nil {
-				log.Printf("Error scanning bin for %s: %v", materialCode, err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin"})
-				return
-			}
-			bins = append(bins, b)
-		}
-
-		if len(bins) > 0 {
-			quantityPerBin = bins[0].MaxBinStock
-		} else {
-			quantityPerBin = m.PackQuantity
-			log.Printf("Warning: Material non-kanban %s tidak memiliki data bin. Fallback Qty/Bin ke PackQty.", materialCode)
-		}
+		bins = append(bins, b)
 	}
 
-	var predictedMovement string
+	quantityPerBin := m.PackQuantity
+	if len(bins) > 0 {
+		quantityPerBin = bins[0].MaxBinStock
+	}
+
+	predictedMovement := "IN"
 	if m.CurrentQuantity >= m.MaxBinQty {
 		predictedMovement = "OUT"
-	} else {
-		predictedMovement = "IN"
 	}
 
 	response := MaterialStatusResponse{
