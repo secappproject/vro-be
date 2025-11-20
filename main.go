@@ -787,9 +787,8 @@ func updateMaterial(c *gin.Context) {
 	var oldVendorCode string
 	var oldVendorStock int
 	var oldOpenPO int
-	var oldMaterialCode string // Tambahkan variabel penampung baru
+	var oldMaterialCode string
 
-	// FIX: Scan ke variable oldMaterialCode, JANGAN ke &m.MaterialCode
 	err := db.QueryRow(
 		"SELECT current_quantity, product_type, vendor_code, material_code, vendor_stock, open_po FROM materials WHERE id = $1",
 		id,
@@ -802,6 +801,42 @@ func updateMaterial(c *gin.Context) {
 		}
 		log.Printf("Error querying old stock: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi stok lama"})
+		return
+	}
+
+	oldBins := []MaterialBin{}
+	binRows, err := db.Query(
+		`SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
+         FROM material_bins
+         WHERE material_id = $1
+         ORDER BY bin_sequence_id`,
+		id,
+	)
+	if err != nil {
+		log.Printf("Error querying old bins: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin lama"})
+		return
+	}
+	defer binRows.Close()
+
+	for binRows.Next() {
+		var b MaterialBin
+		if err := binRows.Scan(
+			&b.ID,
+			&b.MaterialID,
+			&b.BinSequenceID,
+			&b.MaxBinStock,
+			&b.CurrentBinStock,
+		); err != nil {
+			log.Printf("Error scanning old bin: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin lama"})
+			return
+		}
+		oldBins = append(oldBins, b)
+	}
+	if err := binRows.Err(); err != nil {
+		log.Printf("Error during oldBins rows iteration: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses data bin lama"})
 		return
 	}
 
@@ -856,6 +891,7 @@ func updateMaterial(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Max Bin Qty (%d) harus merupakan kelipatan dari Pack Quantity (%d)", m.MaxBinQty, m.PackQuantity)})
 		return
 	}
+
 	if m.ProductType == "kanban" {
 		if m.CurrentQuantity > m.MaxBinQty {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
@@ -879,7 +915,6 @@ func updateMaterial(c *gin.Context) {
 				return
 			}
 		}
-
 	} else {
 		if m.Bins == nil {
 			if m.MaxBinQty > 0 {
@@ -921,6 +956,35 @@ func updateMaterial(c *gin.Context) {
 		}
 	}
 
+	var changedBinSeqID *int
+	if len(oldBins) > 0 && len(m.Bins) > 0 {
+		changes := 0
+		var candidate int
+
+		for _, newBin := range m.Bins {
+
+			var oldStock *int
+			for _, ob := range oldBins {
+				if ob.BinSequenceID == newBin.BinSequenceID {
+					v := ob.CurrentBinStock
+					oldStock = &v
+					break
+				}
+			}
+			if oldStock == nil {
+				continue
+			}
+			if *oldStock != newBin.CurrentBinStock {
+				changes++
+				candidate = newBin.BinSequenceID
+			}
+		}
+
+		if changes == 1 {
+			changedBinSeqID = &candidate
+		}
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
@@ -934,8 +998,8 @@ func updateMaterial(c *gin.Context) {
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
              (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-             VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Stock Edit', NULL)`,
-			id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
+             VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Stock Edit', $7)`,
+			id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC, changedBinSeqID,
 		)
 		if errLog != nil {
 			log.Printf("Error logging stock movement: %v", errLog)
@@ -949,8 +1013,8 @@ func updateMaterial(c *gin.Context) {
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
              (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-             VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
-			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC,
+             VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', $7)`,
+			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC, changedBinSeqID,
 		)
 		if errLog != nil {
 			log.Printf("Error logging vendor stock movement: %v", errLog)
@@ -979,7 +1043,6 @@ func updateMaterial(c *gin.Context) {
 		m.VendorStock, m.OpenPO,
 		id,
 	)
-
 	if err != nil {
 		log.Printf("Error updating material: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update material: " + err.Error()})
@@ -1107,7 +1170,6 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		// Nilai lama sebelum perubahan
 		oldSoH := m.CurrentQuantity
 		oldVendorStock := m.VendorStock
 		oldOpenPO := m.OpenPO
@@ -1118,7 +1180,7 @@ func scanAutoMaterials(c *gin.Context) {
 		var movementVendor string
 
 		if movementRaw == "in" {
-			// SCAN IN
+
 			change = maxBinStock
 			if currentBinStock > 0 {
 				c.JSON(http.StatusConflict, gin.H{"error": "Bin sudah terisi"})
@@ -1141,7 +1203,7 @@ func scanAutoMaterials(c *gin.Context) {
 			movementStock = "Scan In"
 			movementVendor = "Scan In Vendor"
 		} else {
-			// SCAN OUT
+
 			change = -(qtyInput * m.PackQuantity)
 			newBinStock = currentBinStock + change
 
@@ -1151,14 +1213,13 @@ func scanAutoMaterials(c *gin.Context) {
 			}
 
 			m.CurrentQuantity = oldSoH + change
-			m.VendorStock = oldVendorStock - change // change negatif → vendorStock naik
+			m.VendorStock = oldVendorStock - change
 			m.OpenPO = oldOpenPO - change
 
 			movementStock = "Scan Out"
 			movementVendor = "Scan Out Vendor"
 		}
 
-		// Update BIN
 		_, err = tx.Exec(`
             UPDATE material_bins
             SET current_bin_stock = $1
@@ -1170,7 +1231,6 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		// Update MATERIAL (SOH + vendor + open PO)
 		_, err = tx.Exec(`
             UPDATE materials
             SET current_quantity = $1,
@@ -1187,7 +1247,6 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		// Log pergerakan SOH
 		_, err = tx.Exec(`
             INSERT INTO stock_movements
                 (material_id, material_code, movement_type,
@@ -1210,7 +1269,6 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		// Log pergerakan Vendor Stock
 		vendorChange := m.VendorStock - oldVendorStock
 		if vendorChange != 0 {
 			_, err = tx.Exec(`
