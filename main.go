@@ -762,7 +762,6 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
-
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	role := c.GetHeader("X-User-Role")
@@ -864,6 +863,22 @@ func updateMaterial(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity tidak boleh negatif"})
 			return
 		}
+		// Validation for kanban consistency if bins are provided
+		if len(m.Bins) > 0 {
+			calculatedTotal := 0
+			for _, bin := range m.Bins {
+				if bin.CurrentBinStock < 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Stok bin tidak boleh negatif"})
+					return
+				}
+				calculatedTotal += bin.CurrentBinStock
+			}
+			if calculatedTotal != m.CurrentQuantity {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Inkonsistensi Stok: Total %d vs Sum Bin %d", m.CurrentQuantity, calculatedTotal)})
+				return
+			}
+		}
+
 	} else {
 		if m.Bins == nil {
 			if m.MaxBinQty > 0 {
@@ -977,7 +992,8 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
-	if m.ProductType != "kanban" && len(m.Bins) > 0 {
+	// Updated: Allow saving bins for Kanban too
+	if len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
             INSERT INTO material_bins 
             (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
