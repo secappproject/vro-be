@@ -762,6 +762,7 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
+
 func updateMaterial(c *gin.Context) {
 	id := c.Param("id")
 	role := c.GetHeader("X-User-Role")
@@ -799,7 +800,6 @@ func updateMaterial(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Material tidak ditemukan"})
 			return
 		}
-		log.Printf("Error querying old stock: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi stok lama"})
 		return
 	}
@@ -813,7 +813,6 @@ func updateMaterial(c *gin.Context) {
 		id,
 	)
 	if err != nil {
-		log.Printf("Error querying old bins: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data bin lama"})
 		return
 	}
@@ -828,16 +827,10 @@ func updateMaterial(c *gin.Context) {
 			&b.MaxBinStock,
 			&b.CurrentBinStock,
 		); err != nil {
-			log.Printf("Error scanning old bin: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai bin lama"})
 			return
 		}
 		oldBins = append(oldBins, b)
-	}
-	if err := binRows.Err(); err != nil {
-		log.Printf("Error during oldBins rows iteration: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses data bin lama"})
-		return
 	}
 
 	if role == "Vendor" {
@@ -859,16 +852,6 @@ func updateMaterial(c *gin.Context) {
 	if (stockChanged || vendorStockChanged || openPOChanged) && m.PIC == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "PIC (Nama Anda) wajib diisi saat mengubah Current Stock, Vendor Stock, atau Open PO."})
 		return
-	}
-
-	if stockChanged && m.PIC != "" {
-		log.Printf("--- STOCK CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldQty, m.CurrentQuantity)
-	}
-	if vendorStockChanged && m.PIC != "" {
-		log.Printf("--- VENDOR STOCK CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldVendorStock, m.VendorStock)
-	}
-	if openPOChanged && m.PIC != "" {
-		log.Printf("--- OPEN PO CHANGE: Material ID %s updated by %s (Old: %d, New: %d) ---", id, m.PIC, oldOpenPO, m.OpenPO)
 	}
 
 	if m.PackQuantity <= 0 {
@@ -957,37 +940,40 @@ func updateMaterial(c *gin.Context) {
 	}
 
 	var changedBinSeqID *int
-	if len(oldBins) > 0 && len(m.Bins) > 0 {
-		changes := 0
-		var candidate int
+	changesCount := 0
+	var candidateBinID int
 
-		for _, newBin := range m.Bins {
+	oldBinMap := make(map[int]int)
+	for _, ob := range oldBins {
+		oldBinMap[ob.BinSequenceID] = ob.CurrentBinStock
+	}
 
-			var oldStock *int
-			for _, ob := range oldBins {
-				if ob.BinSequenceID == newBin.BinSequenceID {
-					v := ob.CurrentBinStock
-					oldStock = &v
-					break
-				}
+	for _, newBin := range m.Bins {
+		oldStock, exists := oldBinMap[newBin.BinSequenceID]
+		isChanged := false
+
+		if !exists {
+			if newBin.CurrentBinStock > 0 {
+				isChanged = true
 			}
-			if oldStock == nil {
-				continue
-			}
-			if *oldStock != newBin.CurrentBinStock {
-				changes++
-				candidate = newBin.BinSequenceID
+		} else {
+			if oldStock != newBin.CurrentBinStock {
+				isChanged = true
 			}
 		}
 
-		if changes == 1 {
-			changedBinSeqID = &candidate
+		if isChanged {
+			changesCount++
+			candidateBinID = newBin.BinSequenceID
 		}
+	}
+
+	if changesCount == 1 {
+		changedBinSeqID = &candidateBinID
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("Error starting transaction: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi update"})
 		return
 	}
@@ -995,14 +981,18 @@ func updateMaterial(c *gin.Context) {
 
 	if stockChanged {
 		change := m.CurrentQuantity - oldQty
+		noteMsg := "Manual Stock Edit"
+		if changesCount > 1 {
+			noteMsg = "Manual Edit (Multiple Bins)"
+		}
+
 		_, errLog := tx.Exec(
 			`INSERT INTO stock_movements 
              (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-             VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Stock Edit', $7)`,
-			id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC, changedBinSeqID,
+             VALUES ($1, $2, 'Edit', $3, $4, $5, $6, $7, $8)`,
+			id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC, noteMsg, changedBinSeqID,
 		)
 		if errLog != nil {
-			log.Printf("Error logging stock movement: %v", errLog)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok"})
 			return
 		}
@@ -1017,7 +1007,6 @@ func updateMaterial(c *gin.Context) {
 			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC, changedBinSeqID,
 		)
 		if errLog != nil {
-			log.Printf("Error logging vendor stock movement: %v", errLog)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat histori stok vendor"})
 			return
 		}
@@ -1044,14 +1033,12 @@ func updateMaterial(c *gin.Context) {
 		id,
 	)
 	if err != nil {
-		log.Printf("Error updating material: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update material: " + err.Error()})
 		return
 	}
 
 	_, err = tx.Exec("DELETE FROM material_bins WHERE material_id = $1", id)
 	if err != nil {
-		log.Printf("Error deleting old bins: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus bin lama"})
 		return
 	}
@@ -1063,7 +1050,6 @@ func updateMaterial(c *gin.Context) {
             VALUES ($1, $2, $3, $4)
         `)
 		if err != nil {
-			log.Printf("Error preparing bin statement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan insert bin"})
 			return
 		}
@@ -1072,7 +1058,6 @@ func updateMaterial(c *gin.Context) {
 		for _, bin := range m.Bins {
 			_, err := stmt.Exec(id, bin.BinSequenceID, bin.MaxBinStock, bin.CurrentBinStock)
 			if err != nil {
-				log.Printf("Error inserting bin: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat bin material"})
 				return
 			}
@@ -1080,7 +1065,6 @@ func updateMaterial(c *gin.Context) {
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("Error committing transaction: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan update material"})
 		return
 	}
