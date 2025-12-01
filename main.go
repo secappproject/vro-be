@@ -149,7 +149,7 @@ func main() {
 	router := gin.Default()
 	router.RedirectTrailingSlash = true
 	config := cors.Config{
-		AllowOrigins:     []string{"https://vro-fe.vercel.app", "http://localhost:3000", "http://localhost:3001"},
+		AllowOrigins:     []string{"https://vro-fe.vercel.app", "http://localhost:3000", "http://localhost:3001", "http://72.61.210.181:3001", "http://72.61.210.181:3000", "http://72.61.210.181"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-User-Role", "X-User-Company", "X-User-Username"},
 		ExposeHeaders:    []string{"Content-Length"},
