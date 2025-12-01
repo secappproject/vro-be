@@ -125,7 +125,7 @@ func main() {
 		log.Println("⚠️  No .env file found — assuming production environment")
 	}
 	connStr := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		mustGetEnv("POSTGRES_HOST"),
 		mustGetEnv("POSTGRES_USER"),
 		mustGetEnv("POSTGRES_PASSWORD"),
