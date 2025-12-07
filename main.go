@@ -56,6 +56,12 @@ type Vendor struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+type VendorStockUpdateRequest struct {
+	MaterialCode string `json:"materialCode"`
+	VendorStock  int    `json:"vendorStock"`
+	OpenPO       int    `json:"openPO"`
+}
+
 type Material struct {
 	ID                  int           `json:"id"`
 	MaterialCode        string        `json:"material" binding:"required"`
@@ -187,6 +193,7 @@ func main() {
 			materials.GET("/", getMaterials)
 			materials.GET("/status", getMaterialStatus)
 			materials.POST("/scan/auto", ScanAuthMiddleware(), scanAutoMaterials)
+			materials.POST("/bulk-stock", MaterialEditAuthMiddleware(), bulkUpdateVendorStock)
 
 			materials.POST("/", SuperuserOnlyAuthMiddleware(), createMaterial)
 			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
@@ -206,7 +213,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8090"
 	}
 
 	fmt.Printf("🚀 Server Go berjalan di port %s\n", port)
@@ -450,7 +457,113 @@ func deleteUser(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pengguna berhasil dihapus"})
 }
+func bulkUpdateVendorStock(c *gin.Context) {
+	role := c.GetHeader("X-User-Role")
+	companyName := c.GetHeader("X-User-Company")
+	username := c.GetHeader("X-User-Username")
 
+	pic := username
+	if pic == "" {
+		pic = role
+	}
+
+	var requests []VendorStockUpdateRequest
+	if err := c.ShouldBindJSON(&requests); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format data tidak valid: " + err.Error()})
+		return
+	}
+
+	if len(requests) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Data kosong"})
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi: " + err.Error()})
+		return
+	}
+	defer tx.Rollback()
+
+	updatedCount := 0
+	errorsList := []string{}
+
+	for _, req := range requests {
+
+		var id int
+		var oldVendorStock int
+		var currentVendorCode string
+
+		errScan := tx.QueryRow(`
+            SELECT id, vendor_stock, vendor_code 
+            FROM materials 
+            WHERE material_code = $1 
+            FOR UPDATE`,
+			req.MaterialCode,
+		).Scan(&id, &oldVendorStock, &currentVendorCode)
+
+		if errScan != nil {
+			if errScan == sql.ErrNoRows {
+				errorsList = append(errorsList, fmt.Sprintf("❌ %s: Material tidak ditemukan", req.MaterialCode))
+			} else {
+				errorsList = append(errorsList, fmt.Sprintf("❌ %s: DB Error saat cek data", req.MaterialCode))
+			}
+			continue
+		}
+
+		if role == "Vendor" && currentVendorCode != companyName {
+			errorsList = append(errorsList, fmt.Sprintf("⛔ %s: Hak akses ditolak (Milik %s)", req.MaterialCode, currentVendorCode))
+			continue
+		}
+
+		_, errUpdate := tx.Exec(`
+            UPDATE materials 
+            SET vendor_stock = $1, open_po = $2
+            WHERE id = $3`,
+			req.VendorStock, req.OpenPO, id,
+		)
+
+		if errUpdate != nil {
+			log.Printf("SQL Error update %s: %v", req.MaterialCode, errUpdate)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error saat update " + req.MaterialCode})
+			return
+		}
+
+		diff := req.VendorStock - oldVendorStock
+
+		if diff != 0 {
+			_, errLog := tx.Exec(`
+                INSERT INTO stock_movements 
+                (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
+				id,
+				req.MaterialCode,
+				diff,
+				oldVendorStock,
+				req.VendorStock,
+				pic,
+			)
+
+			if errLog != nil {
+				log.Printf("Gagal log history untuk %s: %v", req.MaterialCode, errLog)
+			}
+		}
+
+		updatedCount++
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("Commit Failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal commit transaksi: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Proses selesai",
+		"updatedCount": updatedCount,
+		"errors":       errorsList,
+	})
+}
 func getCompanies(c *gin.Context) {
 	rows, err := db.Query("SELECT DISTINCT company_name FROM vendors ORDER BY company_name")
 	if err != nil {
