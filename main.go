@@ -187,7 +187,7 @@ func main() {
 			vendors.PUT("/:id", SuperuserOnlyAuthMiddleware(), updateVendor)
 			vendors.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteVendor)
 		}
-
+		api.GET("/movements", getAllStockMovements)
 		materials := api.Group("/materials")
 		{
 			materials.GET("/", getMaterials)
@@ -690,6 +690,58 @@ func deleteVendor(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vendor berhasil dihapus"})
 }
+
+func getAllStockMovements(c *gin.Context) {
+	role := c.GetHeader("X-User-Role")
+	companyName := c.GetHeader("X-User-Company")
+
+	query := `
+        SELECT 
+            sm.id, sm.material_id, sm.material_code, sm.movement_type, 
+            sm.quantity_change, sm.old_quantity, sm.new_quantity, 
+            sm.pic, sm.notes, sm.timestamp, sm.bin_sequence_id
+        FROM stock_movements sm
+        JOIN materials m ON sm.material_id = m.id
+    `
+
+	var params []any
+
+	if role == "Vendor" {
+		if companyName == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Vendor tanpa company tidak boleh akses"})
+			return
+		}
+		query += " WHERE m.vendor_code = $1"
+		params = append(params, companyName)
+	}
+
+	query += " ORDER BY sm.timestamp DESC"
+
+	rows, err := db.Query(query, params...)
+	if err != nil {
+		log.Printf("Error querying all movements: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data histori"})
+		return
+	}
+	defer rows.Close()
+
+	movements := make([]StockMovement, 0)
+	for rows.Next() {
+		var m StockMovement
+		if err := rows.Scan(
+			&m.ID, &m.MaterialID, &m.MaterialCode, &m.MovementType,
+			&m.QuantityChange, &m.OldQuantity, &m.NewQuantity, &m.PIC, &m.Notes, &m.Timestamp, &m.BinSequenceID,
+		); err != nil {
+			log.Printf("Error scanning movement: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data histori"})
+			return
+		}
+		movements = append(movements, m)
+	}
+
+	c.JSON(http.StatusOK, movements)
+}
+
 func getMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
