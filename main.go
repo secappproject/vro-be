@@ -695,6 +695,7 @@ func getAllStockMovements(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
 
+	// Base query: Join dengan materials untuk cek akses vendor
 	query := `
         SELECT 
             sm.id, sm.material_id, sm.material_code, sm.movement_type, 
@@ -706,6 +707,7 @@ func getAllStockMovements(c *gin.Context) {
 
 	var params []any
 
+	// Filter khusus Vendor
 	if role == "Vendor" {
 		if companyName == "" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Vendor tanpa company tidak boleh akses"})
@@ -715,6 +717,7 @@ func getAllStockMovements(c *gin.Context) {
 		params = append(params, companyName)
 	}
 
+	// Urutkan dari yang terbaru
 	query += " ORDER BY sm.timestamp DESC"
 
 	rows, err := db.Query(query, params...)
@@ -1163,7 +1166,6 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
-
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1248,7 +1250,6 @@ func scanAutoMaterials(c *gin.Context) {
 
 		oldSoH := m.CurrentQuantity
 		oldVendorStock := m.VendorStock
-		oldOpenPO := m.OpenPO
 
 		var change int
 		var newBinStock int
@@ -1273,8 +1274,10 @@ func scanAutoMaterials(c *gin.Context) {
 
 			newBinStock = change
 			m.CurrentQuantity = oldSoH + change
+
+			// Scan IN mengurangi Vendor Stock dan Open PO
 			m.VendorStock = oldVendorStock - change
-			m.OpenPO = oldOpenPO - change
+			m.OpenPO = m.OpenPO - change
 
 			movementStock = "Scan In"
 			movementVendor = "Scan In Vendor"
@@ -1289,8 +1292,10 @@ func scanAutoMaterials(c *gin.Context) {
 			}
 
 			m.CurrentQuantity = oldSoH + change
-			m.VendorStock = oldVendorStock - change
-			m.OpenPO = oldOpenPO - change
+
+			// FIX: Scan OUT jangan update Vendor Stock / Open PO
+			// m.VendorStock = oldVendorStock - change  <-- HAPUS
+			// m.OpenPO = oldOpenPO - change            <-- HAPUS
 
 			movementStock = "Scan Out"
 			movementVendor = "Scan Out Vendor"
@@ -1378,6 +1383,7 @@ func scanAutoMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Scan berhasil"})
 }
+
 func getMaterialStatus(c *gin.Context) {
 	materialCode := c.Query("code")
 	if materialCode == "" {
