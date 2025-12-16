@@ -330,3 +330,5 @@ CREATE TABLE IF NOT EXISTS download_logs (
 
 ALTER TABLE materials
 ADD COLUMN open_po INT DEFAULT 0;
+
+ALTER TABLE materials ADD COLUMN previous_product_type VARCHAR(50);

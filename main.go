@@ -63,20 +63,21 @@ type VendorStockUpdateRequest struct {
 }
 
 type Material struct {
-	ID                  int           `json:"id"`
-	MaterialCode        string        `json:"material" binding:"required"`
-	MaterialDescription string        `json:"materialDescription"`
-	Location            string        `json:"lokasi"`
-	PackQuantity        int           `json:"packQuantity" binding:"required"`
-	MaxBinQty           int           `json:"maxBinQty" binding:"required"`
-	MinBinQty           int           `json:"minBinQty" binding:"required"`
-	VendorCode          string        `json:"vendorCode"`
-	CurrentQuantity     int           `json:"currentQuantity"`
-	PIC                 string        `json:"pic"`
-	ProductType         string        `json:"productType"`
-	VendorStock         int           `json:"vendorStock"`
-	OpenPO              int           `json:"openPO"`
-	Bins                []MaterialBin `json:"bins,omitempty"`
+	ID                  int            `json:"id"`
+	MaterialCode        string         `json:"material" binding:"required"`
+	MaterialDescription string         `json:"materialDescription"`
+	Location            string         `json:"lokasi"`
+	PackQuantity        int            `json:"packQuantity" binding:"required"`
+	MaxBinQty           int            `json:"maxBinQty" binding:"required"`
+	MinBinQty           int            `json:"minBinQty" binding:"required"`
+	VendorCode          string         `json:"vendorCode"`
+	CurrentQuantity     int            `json:"currentQuantity"`
+	PIC                 string         `json:"pic"`
+	ProductType         string         `json:"productType"`
+	PreviousProductType sql.NullString `json:"previousProductType"`
+	VendorStock         int            `json:"vendorStock"`
+	OpenPO              int            `json:"openPO"`
+	Bins                []MaterialBin  `json:"bins,omitempty"`
 }
 
 type MaterialStatusResponse struct {
@@ -199,6 +200,9 @@ func main() {
 			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
 			materials.GET("/:id/movements", getStockMovements)
 			materials.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteMaterial)
+			materials.PATCH("/:id/block", MaterialEditAuthMiddleware(), blockMaterial)
+			materials.PATCH("/:id/unblock", MaterialEditAuthMiddleware(), unblockMaterial)
+
 		}
 
 		logs := api.Group("/logs")
@@ -213,7 +217,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8090"
+		port = "8092"
 	}
 
 	fmt.Printf("🚀 Server Go berjalan di port %s\n", port)
@@ -1379,10 +1383,9 @@ func scanAutoMaterials(c *gin.Context) {
 			}
 		}
 
-		// 3. Update Material Utama SEKALI SAJA dengan Total Akumulasi
 		m.CurrentQuantity += totalSOHChange
-		m.VendorStock -= totalVendorChange // Kurangi total
-		m.OpenPO -= totalPOChange          // Kurangi total
+		m.VendorStock -= totalVendorChange
+		m.OpenPO -= totalPOChange
 
 		_, err = tx.Exec(`
             UPDATE materials
@@ -1400,7 +1403,6 @@ func scanAutoMaterials(c *gin.Context) {
 			return
 		}
 
-		// 4. Insert Semua Logs
 		for _, logItem := range pendingLogs {
 			_, err = tx.Exec(`
                 INSERT INTO stock_movements
@@ -1432,6 +1434,52 @@ func scanAutoMaterials(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Scan berhasil"})
+}
+
+func blockMaterial(c *gin.Context) {
+	id := c.Param("id")
+
+	var currentType string
+	err := db.QueryRow("SELECT product_type FROM materials WHERE id = $1", id).Scan(&currentType)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Material tidak ditemukan"})
+		return
+	}
+
+	if currentType == "block" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Material sudah diblock"})
+		return
+	}
+
+	_, err = db.Exec(`
+        UPDATE materials 
+        SET previous_product_type = product_type, 
+            product_type = 'block' 
+        WHERE id = $1`, id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memblokir material"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diblock"})
+}
+
+func unblockMaterial(c *gin.Context) {
+	id := c.Param("id")
+
+	_, err := db.Exec(`
+        UPDATE materials 
+        SET product_type = COALESCE(previous_product_type, 'kanban'), 
+            previous_product_type = NULL 
+        WHERE id = $1`, id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal unblock material"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil di-unblock"})
 }
 
 func getMaterialStatus(c *gin.Context) {
