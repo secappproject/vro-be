@@ -1170,6 +1170,7 @@ func updateMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil diupdate", "id": id})
 }
+
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1190,7 +1191,6 @@ func scanAutoMaterials(c *gin.Context) {
 		return
 	}
 
-	// 1. Parsing dan Grouping berdasarkan Material Code agar bisa update batch
 	type ScanItem struct {
 		Raw      string
 		Material string
@@ -1213,8 +1213,9 @@ func scanAutoMaterials(c *gin.Context) {
 		}
 
 		item := ScanItem{
-			Raw:      val,
-			Material: parts[0],
+			Raw: val,
+
+			Material: strings.ToUpper(parts[0]),
 			Movement: strings.ToLower(parts[1]),
 			BinID:    func() int { i, _ := strconv.Atoi(parts[2]); return i }(),
 			Qty:      qty,
@@ -1229,11 +1230,9 @@ func scanAutoMaterials(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
-	// 2. Proses per Group Material
 	for materialCode, items := range groupedScans {
 		var m Material
 
-		// Lock Material untuk update
 		err := tx.QueryRow(`
             SELECT id, pack_quantity, max_bin_qty, current_quantity,
                    min_bin_qty, product_type, vendor_stock,
@@ -1249,7 +1248,8 @@ func scanAutoMaterials(c *gin.Context) {
 		)
 
 		if err != nil {
-			// Skip jika material tidak ketemu, atau handle error global
+
+			log.Printf("Material %s tidak ditemukan atau gagal lock: %v", materialCode, err)
 			continue
 		}
 
@@ -1262,7 +1262,6 @@ func scanAutoMaterials(c *gin.Context) {
 		totalVendorChange := 0
 		totalPOChange := 0
 
-		// Tampung history logs agar di-insert setelah validasi sukses
 		type HistoryLog struct {
 			MovementType string
 			Change       int
@@ -1276,7 +1275,6 @@ func scanAutoMaterials(c *gin.Context) {
 		oldSOHBase := m.CurrentQuantity
 		oldVendorBase := m.VendorStock
 
-		// Iterasi item dalam satu material
 		for _, item := range items {
 			var currentBinStock int
 			var maxBinStock int
@@ -1302,34 +1300,32 @@ func scanAutoMaterials(c *gin.Context) {
 
 			if item.Movement == "in" {
 				change = maxBinStock
-				// Validasi Bin
+
 				if currentBinStock > 0 {
 					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Bin %d %s sudah terisi", item.BinID, materialCode)})
 					return
 				}
 
-				// Hitung kebutuhan Vendor (akumulatif dalam loop ini)
 				needed := change
 				if (m.VendorStock - totalVendorChange) < needed {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Vendor stock %s tidak cukup untuk semua bin yang discan", materialCode)})
+					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Vendor stock %s tidak cukup", materialCode)})
 					return
 				}
 				if (m.OpenPO - totalPOChange) < needed {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Open PO %s tidak cukup untuk semua bin yang discan", materialCode)})
+					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Open PO %s tidak cukup", materialCode)})
 					return
 				}
 
 				newBinStock = change
-
-				vendorChange = -change      // Vendor berkurang
-				totalVendorChange += change // Akumulasi pengurangan (positif value utk pengurangan nanti)
+				vendorChange = -change
+				totalVendorChange += change
 				totalPOChange += change
 
 				movementStock = "Scan In"
 				movementVendor = "Scan In Vendor"
 
 			} else {
-				// OUT logic
+
 				change = -(item.Qty * m.PackQuantity)
 				newBinStock = currentBinStock + change
 
@@ -1338,14 +1334,11 @@ func scanAutoMaterials(c *gin.Context) {
 					return
 				}
 
-				// OUT: Vendor Stock & PO TIDAK BERUBAH (sesuai request sebelumnya)
 				vendorChange = 0
-
 				movementStock = "Scan Out"
 				movementVendor = "Scan Out Vendor"
 			}
 
-			// Update Bin langsung (karena tiap bin unik)
 			_, err = tx.Exec(`
                 UPDATE material_bins
                 SET current_bin_stock = $1
@@ -1357,25 +1350,22 @@ func scanAutoMaterials(c *gin.Context) {
 				return
 			}
 
-			// Catat perubahan SOH total
 			totalSOHChange += change
 
-			// Siapkan Log SOH
 			pendingLogs = append(pendingLogs, HistoryLog{
 				MovementType: movementStock,
 				Change:       change,
-				OldQty:       oldSOHBase + totalSOHChange - change, // Old running
-				NewQty:       oldSOHBase + totalSOHChange,          // New running
+				OldQty:       oldSOHBase + totalSOHChange - change,
+				NewQty:       oldSOHBase + totalSOHChange,
 				Notes:        fmt.Sprintf("%s Bin %d (SOH)", movementStock, item.BinID),
 				BinID:        item.BinID,
 			})
 
-			// Siapkan Log Vendor (Jika ada perubahan)
 			if vendorChange != 0 {
 				pendingLogs = append(pendingLogs, HistoryLog{
 					MovementType: movementVendor,
 					Change:       vendorChange,
-					OldQty:       oldVendorBase - (totalVendorChange - change), // Matematika sedikit rumit utk running balance mundur
+					OldQty:       oldVendorBase - (totalVendorChange - change),
 					NewQty:       oldVendorBase - totalVendorChange,
 					Notes:        fmt.Sprintf("%s Bin %d (Vendor)", movementVendor, item.BinID),
 					BinID:        item.BinID,
@@ -1481,7 +1471,6 @@ func unblockMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Material berhasil di-unblock"})
 }
-
 func getMaterialStatus(c *gin.Context) {
 	materialCode := c.Query("code")
 	if materialCode == "" {
@@ -1490,11 +1479,12 @@ func getMaterialStatus(c *gin.Context) {
 	}
 
 	var m Material
+
 	err := db.QueryRow(
 		`SELECT id, pack_quantity, max_bin_qty, min_bin_qty, 
                 current_quantity, product_type, vendor_stock, open_po
          FROM materials 
-         WHERE material_code = $1`,
+         WHERE material_code ILIKE $1`,
 		materialCode,
 	).Scan(
 		&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.MinBinQty,
