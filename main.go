@@ -996,10 +996,10 @@ func updateMaterial(c *gin.Context) {
 	}
 
 	if role == "Vendor" {
-		if companyName == "" || oldVendorCode != companyName {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Vendor mismatch"})
-			return
-		}
+		// if companyName == "" || oldVendorCode != companyName {
+		// 	c.JSON(http.StatusForbidden, gin.H{"error": "Akses ditolak: Vendor mismatch"})
+		// 	return
+		// }
 		m.VendorCode = companyName
 	}
 
