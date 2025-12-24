@@ -833,7 +833,6 @@ func getMaterials(c *gin.Context) {
 
 	c.JSON(http.StatusOK, materials)
 }
-
 func createMaterial(c *gin.Context) {
 	var m Material
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -844,7 +843,6 @@ func createMaterial(c *gin.Context) {
 	if m.ProductType == "" {
 		m.ProductType = "kanban"
 	}
-
 	if m.ProductType == "option" {
 		m.PackQuantity = 1
 		m.MinBinQty = 1
@@ -858,8 +856,13 @@ func createMaterial(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
 		return
 	}
-	if m.MaxBinQty%m.PackQuantity != 0 {
+	if m.ProductType == "kanban" && m.MaxBinQty%m.PackQuantity != 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty harus kelipatan Pack Quantity"})
+		return
+	}
+
+	if m.CurrentQuantity > m.MaxBinQty {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
 		return
 	}
 
@@ -874,14 +877,41 @@ func createMaterial(c *gin.Context) {
 				CurrentBinStock: 0,
 			}
 		}
+	} else {
+
+		if len(m.Bins) == 0 {
+
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Bins harus diisi untuk tipe non-kanban"})
+			return
+		}
 	}
 
-	if m.ProductType != "kanban" && len(m.Bins) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bins harus diisi untuk tipe non-kanban"})
-		return
-	}
+	if m.CurrentQuantity > 0 {
+		remainingStock := m.CurrentQuantity
 
-	m.CurrentQuantity = 0
+		for i := range m.Bins {
+			if remainingStock <= 0 {
+				break
+			}
+
+			space := m.Bins[i].MaxBinStock
+
+			fillAmount := 0
+			if remainingStock >= space {
+				fillAmount = space
+			} else {
+				fillAmount = remainingStock
+			}
+
+			m.Bins[i].CurrentBinStock = fillAmount
+			remainingStock -= fillAmount
+		}
+
+		if remainingStock > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Current Quantity melebihi kapasitas total bin"})
+			return
+		}
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -900,13 +930,26 @@ func createMaterial(c *gin.Context) {
         RETURNING id`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
-		m.VendorCode, 0, m.ProductType,
+		m.VendorCode, m.CurrentQuantity, m.ProductType,
 		m.VendorStock, m.OpenPO,
 	).Scan(&m.ID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat material: " + err.Error()})
 		return
+	}
+
+	if m.CurrentQuantity > 0 {
+		_, errLog := tx.Exec(`
+            INSERT INTO stock_movements 
+            (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+            VALUES ($1, $2, 'Initial Stock', $3, 0, $3, 'System', 'Initial Import', NULL)`,
+			m.ID, m.MaterialCode, m.CurrentQuantity,
+		)
+		if errLog != nil {
+
+			log.Printf("Gagal log initial stock: %v", errLog)
+		}
 	}
 
 	stmt, err := tx.Prepare(`
@@ -920,7 +963,8 @@ func createMaterial(c *gin.Context) {
 	defer stmt.Close()
 
 	for _, bin := range m.Bins {
-		_, err := stmt.Exec(m.ID, bin.BinSequenceID, bin.MaxBinStock, 0)
+
+		_, err := stmt.Exec(m.ID, bin.BinSequenceID, bin.MaxBinStock, bin.CurrentBinStock)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal insert bins"})
 			return
