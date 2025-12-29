@@ -860,8 +860,23 @@ func createMaterial(c *gin.Context) {
 	if m.ProductType == "" {
 		m.ProductType = "kanban"
 	}
-	if m.ProductType == "option" {
 
+	// Logic untuk "special" (Special Consumable)
+	if m.ProductType == "special" {
+		// Validasi khusus untuk special consumable
+		if m.PackQuantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity wajib diisi > 0 untuk tipe Special Consumable"})
+			return
+		}
+		// Abaikan MaxBinQty/MinBinQty validasi ketat, atau set default jika perlu
+		if m.MaxBinQty <= 0 {
+			m.MaxBinQty = m.PackQuantity // Set minimal sama agar lolos constraint DB
+		}
+		// Paksa tidak ada bin
+		m.Bins = []MaterialBin{}
+	}
+
+	if m.ProductType == "option" {
 		if m.PackQuantity == 0 {
 			m.PackQuantity = 1
 		}
@@ -870,25 +885,28 @@ func createMaterial(c *gin.Context) {
 		}
 	}
 
-	if m.MaxBinQty > 0 && m.MinBinQty > 0 && m.MaxBinQty < m.MinBinQty {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
-		return
-	}
+	// Validasi umum (jika bukan special yang sudah dihandle di atas)
+	if m.ProductType != "special" {
+		if m.MaxBinQty > 0 && m.MinBinQty > 0 && m.MaxBinQty < m.MinBinQty {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
+			return
+		}
 
-	if m.ProductType == "kanban" && m.PackQuantity > 0 && m.MaxBinQty > 0 {
-		if m.MaxBinQty%m.PackQuantity != 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty harus kelipatan Pack Quantity"})
+		if m.ProductType == "kanban" && m.PackQuantity > 0 && m.MaxBinQty > 0 {
+			if m.MaxBinQty%m.PackQuantity != 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty harus kelipatan Pack Quantity"})
+				return
+			}
+		}
+
+		if m.MaxBinQty > 0 && m.CurrentQuantity > m.MaxBinQty {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
 			return
 		}
 	}
 
-	if m.MaxBinQty > 0 && m.CurrentQuantity > m.MaxBinQty {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Current Quantity (%d) tidak boleh melebihi Max Bin Qty (%d)", m.CurrentQuantity, m.MaxBinQty)})
-		return
-	}
-
+	// Generate Bins
 	if m.ProductType == "kanban" {
-
 		if m.PackQuantity > 0 && m.MaxBinQty > 0 {
 			totalBins := m.MaxBinQty / m.PackQuantity
 			m.Bins = make([]MaterialBin, totalBins)
@@ -901,17 +919,20 @@ func createMaterial(c *gin.Context) {
 				}
 			}
 		} else {
-
 			m.Bins = []MaterialBin{}
 		}
+	} else if m.ProductType == "special" {
+		// Pastikan benar-benar kosong
+		m.Bins = []MaterialBin{}
 	} else {
-
+		// Option atau lainnya
 		if m.Bins == nil {
 			m.Bins = []MaterialBin{}
 		}
 	}
 
-	if m.CurrentQuantity > 0 && len(m.Bins) > 0 {
+	// Isi stok awal ke bin (Hanya jika bukan special dan punya bin)
+	if m.ProductType != "special" && m.CurrentQuantity > 0 && len(m.Bins) > 0 {
 		remainingStock := m.CurrentQuantity
 
 		for i := range m.Bins {
@@ -935,7 +956,6 @@ func createMaterial(c *gin.Context) {
 			m.Bins[i].CurrentBinStock = fillAmount
 			remainingStock -= fillAmount
 		}
-
 	}
 
 	tx, err := db.Begin()
@@ -946,13 +966,13 @@ func createMaterial(c *gin.Context) {
 	defer tx.Rollback()
 
 	err = tx.QueryRow(`
-		INSERT INTO materials (
-			material_code, material_description, location,
-			pack_quantity, max_bin_qty, min_bin_qty,
-			vendor_code, current_quantity, product_type,
-			vendor_stock, open_po
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id`,
+        INSERT INTO materials (
+            material_code, material_description, location,
+            pack_quantity, max_bin_qty, min_bin_qty,
+            vendor_code, current_quantity, product_type,
+            vendor_stock, open_po
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        RETURNING id`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
@@ -966,9 +986,9 @@ func createMaterial(c *gin.Context) {
 
 	if m.CurrentQuantity > 0 {
 		_, errLog := tx.Exec(`
-			INSERT INTO stock_movements 
-			(material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-			VALUES ($1, $2, 'Initial Stock', $3, 0, $3, 'System', 'Manual Create', NULL)`,
+            INSERT INTO stock_movements 
+            (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+            VALUES ($1, $2, 'Initial Stock', $3, 0, $3, 'System', 'Manual Create', NULL)`,
 			m.ID, m.MaterialCode, m.CurrentQuantity,
 		)
 		if errLog != nil {
@@ -977,11 +997,12 @@ func createMaterial(c *gin.Context) {
 		}
 	}
 
+	// Insert Bins jika ada
 	if len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
-			INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
-			VALUES ($1,$2,$3,$4)
-		`)
+            INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
+            VALUES ($1,$2,$3,$4)
+        `)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan insert bins"})
 			return
@@ -1004,7 +1025,6 @@ func createMaterial(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, m)
 }
-
 func scanAutoMaterials(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
@@ -1047,8 +1067,7 @@ func scanAutoMaterials(c *gin.Context) {
 		}
 
 		item := ScanItem{
-			Raw: val,
-
+			Raw:      val,
 			Material: strings.ToUpper(parts[0]),
 			Movement: strings.ToLower(parts[1]),
 			BinID:    func() int { i, _ := strconv.Atoi(parts[2]); return i }(),
@@ -1062,6 +1081,7 @@ func scanAutoMaterials(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi"})
 		return
 	}
+
 	defer tx.Rollback()
 
 	for materialCode, items := range groupedScans {
@@ -1072,7 +1092,7 @@ func scanAutoMaterials(c *gin.Context) {
                    min_bin_qty, product_type, vendor_stock,
                    vendor_code, open_po
             FROM materials
-            WHERE material_code = $1
+            WHERE material_code ILIKE $1
             FOR UPDATE`,
 			materialCode,
 		).Scan(
@@ -1082,7 +1102,6 @@ func scanAutoMaterials(c *gin.Context) {
 		)
 
 		if err != nil {
-
 			log.Printf("Material %s tidak ditemukan atau gagal lock: %v", materialCode, err)
 			continue
 		}
@@ -1109,101 +1128,133 @@ func scanAutoMaterials(c *gin.Context) {
 		oldSOHBase := m.CurrentQuantity
 		oldVendorBase := m.VendorStock
 
-		for _, item := range items {
-			var currentBinStock int
-			var maxBinStock int
+		if strings.ToLower(m.ProductType) == "special" {
 
-			err = tx.QueryRow(`
-                SELECT current_bin_stock, max_bin_stock
-                FROM material_bins
-                WHERE material_id = $1 AND bin_sequence_id = $2
-                FOR UPDATE`,
-				m.ID, item.BinID,
-			).Scan(&currentBinStock, &maxBinStock)
-
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Bin %d pada %s tidak ditemukan", item.BinID, materialCode)})
-				return
+			// Safety check: Pack Quantity tidak boleh 0
+			if m.PackQuantity <= 0 {
+				m.PackQuantity = 1
 			}
 
-			var change int
-			var vendorChange int
-			var newBinStock int
-			var movementStock string
-			var movementVendor string
-
-			if item.Movement == "in" {
-				change = maxBinStock
-
-				if currentBinStock > 0 {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Bin %d %s sudah terisi", item.BinID, materialCode)})
-					return
+			for _, item := range items {
+				// Qty scan (default 1 jika kosong)
+				qtyMultiplier := item.Qty
+				if qtyMultiplier <= 0 {
+					qtyMultiplier = 1
 				}
 
-				needed := change
-				if (m.VendorStock - totalVendorChange) < needed {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Vendor stock %s tidak cukup", materialCode)})
-					return
+				change := m.PackQuantity * qtyMultiplier
+
+				if item.Movement == "in" {
+					// Logic IN: SOH+, Vendor-
+					if (m.VendorStock - totalVendorChange) < change {
+						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Vendor stock %s tidak cukup", materialCode)})
+						return
+					}
+					if (m.OpenPO - totalPOChange) < change {
+						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Open PO %s tidak cukup", materialCode)})
+						return
+					}
+
+					totalSOHChange += change
+					totalVendorChange += change
+					totalPOChange += change
+
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan In (Special)",
+						Change:       change,
+						OldQty:       oldSOHBase + totalSOHChange - change,
+						NewQty:       oldSOHBase + totalSOHChange,
+						Notes:        fmt.Sprintf("Scan In Pack (Qty: %d)", qtyMultiplier),
+						BinID:        0, // NULL
+					})
+					// Log Pengurangan Vendor
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan In Vendor",
+						Change:       -change,
+						OldQty:       oldVendorBase - (totalVendorChange - change),
+						NewQty:       oldVendorBase - totalVendorChange,
+						Notes:        "Auto Deduct Vendor",
+						BinID:        0,
+					})
+
+				} else {
+					// Logic OUT: SOH-
+					if (oldSOHBase + totalSOHChange) < change {
+						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Stok %s tidak cukup", materialCode)})
+						return
+					}
+
+					totalSOHChange -= change
+
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan Out (Special)",
+						Change:       -change,
+						OldQty:       oldSOHBase + totalSOHChange + change,
+						NewQty:       oldSOHBase + totalSOHChange,
+						Notes:        fmt.Sprintf("Scan Out Pack (Qty: %d)", qtyMultiplier),
+						BinID:        0, // NULL
+					})
 				}
-				if (m.OpenPO - totalPOChange) < needed {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Open PO %s tidak cukup", materialCode)})
-					return
-				}
-
-				newBinStock = change
-				vendorChange = -change
-				totalVendorChange += change
-				totalPOChange += change
-
-				movementStock = "Scan In"
-				movementVendor = "Scan In Vendor"
-
-			} else {
-
-				change = -(item.Qty * m.PackQuantity)
-				newBinStock = currentBinStock + change
-
-				if newBinStock < 0 {
-					c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Stok Bin %d %s tidak cukup", item.BinID, materialCode)})
-					return
-				}
-
-				vendorChange = 0
-				movementStock = "Scan Out"
-				movementVendor = "Scan Out Vendor"
 			}
 
-			_, err = tx.Exec(`
-                UPDATE material_bins
-                SET current_bin_stock = $1
-                WHERE material_id = $2 AND bin_sequence_id = $3`,
-				newBinStock, m.ID, item.BinID,
-			)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal update bin"})
-				return
-			}
+		} else {
+			// ==========================================
+			// LOGIC KANBAN/NORMAL (Tidak berubah)
+			// ==========================================
+			for _, item := range items {
+				var currentBinStock, maxBinStock int
+				// Cek Bin Fisik
+				err = tx.QueryRow(`
+                    SELECT current_bin_stock, max_bin_stock FROM material_bins
+                    WHERE material_id = $1 AND bin_sequence_id = $2 FOR UPDATE`,
+					m.ID, item.BinID,
+				).Scan(&currentBinStock, &maxBinStock)
 
-			totalSOHChange += change
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Bin %d tidak ditemukan", item.BinID)})
+					return
+				}
 
-			pendingLogs = append(pendingLogs, HistoryLog{
-				MovementType: movementStock,
-				Change:       change,
-				OldQty:       oldSOHBase + totalSOHChange - change,
-				NewQty:       oldSOHBase + totalSOHChange,
-				Notes:        fmt.Sprintf("%s Bin %d (SOH)", movementStock, item.BinID),
-				BinID:        item.BinID,
-			})
+				var change int
 
-			if vendorChange != 0 {
-				pendingLogs = append(pendingLogs, HistoryLog{
-					MovementType: movementVendor,
-					Change:       vendorChange,
-					OldQty:       oldVendorBase - (totalVendorChange - change),
-					NewQty:       oldVendorBase - totalVendorChange,
-					Notes:        fmt.Sprintf("%s Bin %d (Vendor)", movementVendor, item.BinID),
-					BinID:        item.BinID,
-				})
+				if item.Movement == "in" {
+					change = maxBinStock
+					if currentBinStock > 0 {
+						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Bin %d penuh", item.BinID)})
+						return
+					}
+					if (m.VendorStock - totalVendorChange) < change {
+						c.JSON(http.StatusConflict, gin.H{"error": "Vendor stock kurang"})
+						return
+					}
+					// Update visual bin fisik
+					tx.Exec(`UPDATE material_bins SET current_bin_stock = $1 WHERE material_id=$2 AND bin_sequence_id=$3`, change, m.ID, item.BinID)
+
+					totalSOHChange += change
+					totalVendorChange += change
+					totalPOChange += change
+
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan In", Change: change, OldQty: oldSOHBase + totalSOHChange - change, NewQty: oldSOHBase + totalSOHChange, Notes: fmt.Sprintf("Bin %d", item.BinID), BinID: item.BinID,
+					})
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan In Vendor", Change: -change, OldQty: oldVendorBase - (totalVendorChange - change), NewQty: oldVendorBase - totalVendorChange, Notes: fmt.Sprintf("Bin %d", item.BinID), BinID: item.BinID,
+					})
+
+				} else {
+					change = -(item.Qty * m.PackQuantity)
+					if (currentBinStock + change) < 0 {
+						c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Stok Bin %d kurang", item.BinID)})
+						return
+					}
+					// Update visual bin fisik
+					tx.Exec(`UPDATE material_bins SET current_bin_stock = current_bin_stock + $1 WHERE material_id=$2 AND bin_sequence_id=$3`, change, m.ID, item.BinID)
+
+					totalSOHChange += change
+					pendingLogs = append(pendingLogs, HistoryLog{
+						MovementType: "Scan Out", Change: change, OldQty: oldSOHBase + totalSOHChange - change, NewQty: oldSOHBase + totalSOHChange, Notes: fmt.Sprintf("Bin %d", item.BinID), BinID: item.BinID,
+					})
+				}
 			}
 		}
 
@@ -1228,6 +1279,14 @@ func scanAutoMaterials(c *gin.Context) {
 		}
 
 		for _, logItem := range pendingLogs {
+
+			var binIdArg interface{}
+			if logItem.BinID == 0 {
+				binIdArg = nil
+			} else {
+				binIdArg = logItem.BinID
+			}
+
 			_, err = tx.Exec(`
                 INSERT INTO stock_movements
                     (material_id, material_code, movement_type,
@@ -1243,7 +1302,7 @@ func scanAutoMaterials(c *gin.Context) {
 				logItem.NewQty,
 				pic,
 				logItem.Notes,
-				logItem.BinID,
+				binIdArg,
 			)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mencatat history"})
@@ -1338,6 +1397,7 @@ func getMaterialStatus(c *gin.Context) {
 
 	bins := make([]MaterialBin, 0)
 
+	// Jika tipe "special", bins mungkin kosong, tapi query tidak akan error, cuma return kosong.
 	binRows, err := db.Query(
 		`SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
          FROM material_bins 
@@ -1372,6 +1432,7 @@ func getMaterialStatus(c *gin.Context) {
 	if m.CurrentQuantity >= m.MaxBinQty {
 		predictedMovement = "OUT"
 	}
+	// Logic predicted movement untuk special mungkin beda, tapi logic dasar SOH >= Max (OUT) masih valid sebagai indikator
 
 	response := MaterialStatusResponse{
 		PackQuantity:      m.PackQuantity,
@@ -1406,10 +1467,10 @@ func getStockMovements(c *gin.Context) {
 
 	rows, err := db.Query(
 		`SELECT id, material_id, material_code, movement_type, 
-				quantity_change, old_quantity, new_quantity, pic, notes, timestamp, bin_sequence_id
-		 FROM stock_movements 
-		 WHERE material_id = $1 
-		 ORDER BY timestamp DESC`,
+                quantity_change, old_quantity, new_quantity, pic, notes, timestamp, bin_sequence_id
+         FROM stock_movements 
+         WHERE material_id = $1 
+         ORDER BY timestamp DESC`,
 		materialID,
 	)
 	if err != nil {
@@ -1460,6 +1521,15 @@ func updateMaterial(c *gin.Context) {
 		m.MinBinQty = 1
 	}
 
+	// Logic special update
+	if m.ProductType == "special" {
+		if m.PackQuantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity wajib > 0 untuk special consumable"})
+			return
+		}
+		m.Bins = []MaterialBin{} // Wipe bins logic
+	}
+
 	var oldQty int
 	var oldVendorStock int
 	var oldOpenPO int
@@ -1480,7 +1550,6 @@ func updateMaterial(c *gin.Context) {
 	}
 
 	if role == "Vendor" {
-
 		m.VendorCode = companyName
 	}
 
@@ -1493,31 +1562,41 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
-	if m.PackQuantity <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus > 0"})
-		return
-	}
-	if m.MaxBinQty < m.MinBinQty {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
-		return
-	}
-	if m.ProductType == "kanban" && m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Max Qty harus kelipatan Pack Qty (Kanban)"})
-		return
-	}
+	// Validasi jika BUKAN special
+	if m.ProductType != "special" {
+		if m.PackQuantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Pack Quantity harus > 0"})
+			return
+		}
+		if m.MaxBinQty < m.MinBinQty {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Max Bin Qty tidak boleh lebih kecil dari Min Bin Qty"})
+			return
+		}
+		if m.ProductType == "kanban" && m.MaxBinQty > 0 && m.MaxBinQty%m.PackQuantity != 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Max Qty harus kelipatan Pack Qty (Kanban)"})
+			return
+		}
 
-	if len(m.Bins) > 0 {
-		calculatedTotal := 0
-		for _, bin := range m.Bins {
-			if bin.CurrentBinStock < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Stok bin tidak boleh negatif"})
+		if len(m.Bins) > 0 {
+			calculatedTotal := 0
+			for _, bin := range m.Bins {
+				if bin.CurrentBinStock < 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Stok bin tidak boleh negatif"})
+					return
+				}
+				calculatedTotal += bin.CurrentBinStock
+			}
+			if calculatedTotal != m.CurrentQuantity {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Inkonsistensi: Total Stok (%d) != Jumlah Stok di Bin (%d)", m.CurrentQuantity, calculatedTotal)})
 				return
 			}
-			calculatedTotal += bin.CurrentBinStock
 		}
-		if calculatedTotal != m.CurrentQuantity {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Inkonsistensi: Total Stok (%d) != Jumlah Stok di Bin (%d)", m.CurrentQuantity, calculatedTotal)})
-			return
+	} else {
+		// Validasi jika SPECIAL
+		// Pastikan Current Quantity kelipatan Pack Quantity (sesuai constraint DB check_current_quantity_logic)
+		if m.PackQuantity > 0 && m.CurrentQuantity%m.PackQuantity != 0 {
+			// Opsional: kita bisa toleransi atau reject. Sebaiknya reject jika ingin strik.
+			// Tapi karena user bisa edit manual, kita peringatkan saja atau biarkan constraint DB yang handle.
 		}
 	}
 
@@ -1529,57 +1608,67 @@ func updateMaterial(c *gin.Context) {
 	defer tx.Rollback()
 
 	if stockChanged {
-
-		oldBinMap := make(map[int]int)
-		binRows, err := tx.Query("SELECT bin_sequence_id, current_bin_stock FROM material_bins WHERE material_id = $1", id)
-		if err == nil {
-			for binRows.Next() {
-				var bSeq, bStk int
-				binRows.Scan(&bSeq, &bStk)
-				oldBinMap[bSeq] = bStk
-			}
-			binRows.Close()
-		}
-
-		if len(m.Bins) > 0 {
-			binsLogged := 0
-			for _, newBin := range m.Bins {
-				oldStock := oldBinMap[newBin.BinSequenceID]
-				diff := newBin.CurrentBinStock - oldStock
-
-				if diff != 0 {
-					_, errLog := tx.Exec(
-						`INSERT INTO stock_movements 
-						 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-						 VALUES ($1, $2, 'Edit', $3, $4, $5, $6, $7, $8)`,
-						id, m.MaterialCode, diff, oldStock, newBin.CurrentBinStock, m.PIC, "Manual Edit per Bin", newBin.BinSequenceID,
-					)
-					if errLog != nil {
-						log.Printf("Error log bin movement: %v", errLog)
-					} else {
-						binsLogged++
-					}
-				}
-			}
-
-			if binsLogged == 0 {
-				change := m.CurrentQuantity - oldQty
-				tx.Exec(
-					`INSERT INTO stock_movements 
-					 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-					 VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Edit Total', NULL)`,
-					id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
-				)
-			}
-		} else {
-
+		if m.ProductType == "special" {
+			// Logika edit simple untuk special
 			change := m.CurrentQuantity - oldQty
 			tx.Exec(
 				`INSERT INTO stock_movements 
-				 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-				 VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Edit (No Bin Data)', NULL)`,
+                 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                 VALUES ($1, $2, 'Edit (Special)', $3, $4, $5, $6, 'Manual Edit Special Pack', NULL)`,
 				id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
 			)
+		} else {
+			// Logika edit existing dengan Bin
+			oldBinMap := make(map[int]int)
+			binRows, err := tx.Query("SELECT bin_sequence_id, current_bin_stock FROM material_bins WHERE material_id = $1", id)
+			if err == nil {
+				for binRows.Next() {
+					var bSeq, bStk int
+					binRows.Scan(&bSeq, &bStk)
+					oldBinMap[bSeq] = bStk
+				}
+				binRows.Close()
+			}
+
+			if len(m.Bins) > 0 {
+				binsLogged := 0
+				for _, newBin := range m.Bins {
+					oldStock := oldBinMap[newBin.BinSequenceID]
+					diff := newBin.CurrentBinStock - oldStock
+
+					if diff != 0 {
+						_, errLog := tx.Exec(
+							`INSERT INTO stock_movements 
+                         (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                         VALUES ($1, $2, 'Edit', $3, $4, $5, $6, $7, $8)`,
+							id, m.MaterialCode, diff, oldStock, newBin.CurrentBinStock, m.PIC, "Manual Edit per Bin", newBin.BinSequenceID,
+						)
+						if errLog != nil {
+							log.Printf("Error log bin movement: %v", errLog)
+						} else {
+							binsLogged++
+						}
+					}
+				}
+
+				if binsLogged == 0 {
+					change := m.CurrentQuantity - oldQty
+					tx.Exec(
+						`INSERT INTO stock_movements 
+                     (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                     VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Edit Total', NULL)`,
+						id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
+					)
+				}
+			} else {
+				change := m.CurrentQuantity - oldQty
+				tx.Exec(
+					`INSERT INTO stock_movements 
+                 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+                 VALUES ($1, $2, 'Edit', $3, $4, $5, $6, 'Manual Edit (No Bin Data)', NULL)`,
+					id, m.MaterialCode, change, oldQty, m.CurrentQuantity, m.PIC,
+				)
+			}
 		}
 	}
 
@@ -1587,19 +1676,19 @@ func updateMaterial(c *gin.Context) {
 		change := m.VendorStock - oldVendorStock
 		tx.Exec(
 			`INSERT INTO stock_movements 
-			 (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes)
-			 VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock')`,
+             (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes)
+             VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock')`,
 			id, m.MaterialCode, change, oldVendorStock, m.VendorStock, m.PIC,
 		)
 	}
 
 	_, err = tx.Exec(
 		`UPDATE materials SET 
-			material_code = $1, material_description = $2, location = $3, 
-			pack_quantity = $4, max_bin_qty = $5, min_bin_qty = $6, 
-			vendor_code = $7, current_quantity = $8, product_type = $9,
-			vendor_stock = $10, open_po = $11
-		WHERE id = $12`,
+            material_code = $1, material_description = $2, location = $3, 
+            pack_quantity = $4, max_bin_qty = $5, min_bin_qty = $6, 
+            vendor_code = $7, current_quantity = $8, product_type = $9,
+            vendor_stock = $10, open_po = $11
+        WHERE id = $12`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
@@ -1611,17 +1700,19 @@ func updateMaterial(c *gin.Context) {
 		return
 	}
 
+	// Selalu hapus bin lama dulu (aman untuk semua tipe)
 	_, err = tx.Exec("DELETE FROM material_bins WHERE material_id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal reset bin lama"})
 		return
 	}
 
-	if len(m.Bins) > 0 {
+	// Insert bin baru hanya jika bukan special dan ada datanya
+	if m.ProductType != "special" && len(m.Bins) > 0 {
 		stmt, err := tx.Prepare(`
-			INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
-			VALUES ($1, $2, $3, $4)
-		`)
+            INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock)
+            VALUES ($1, $2, $3, $4)
+        `)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal prepare insert bin"})
 			return
@@ -1728,8 +1819,8 @@ func getLastDownload(c *gin.Context) {
 
 	err := db.QueryRow(
 		`SELECT username, timestamp FROM download_logs
-		 ORDER BY timestamp DESC
-		 LIMIT 1`,
+         ORDER BY timestamp DESC
+         LIMIT 1`,
 	).Scan(&logEntry.Username, &logEntry.Timestamp)
 
 	if err != nil {
@@ -1803,6 +1894,10 @@ func smartImportMaterial(c *gin.Context) {
 		safeMaxBinQty = safePackQty
 	}
 
+	// Override product type logic in case of import quirks
+	// If product type is special, ensure bins are empty later
+	isSpecial := req.ProductType == "special"
+
 	if err == sql.ErrNoRows {
 		log.Println("✨ Mode: CREATE NEW MATERIAL ->", req.MaterialCode)
 
@@ -1849,20 +1944,22 @@ func smartImportMaterial(c *gin.Context) {
 			return
 		}
 
-		if len(req.Bins) > 0 {
-			stmt, _ := tx.Prepare(`INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock) VALUES ($1,$2,$3,$4)`)
-			defer stmt.Close()
-			for _, bin := range req.Bins {
-				stmt.Exec(existingID, bin.BinSequenceID, bin.MaxBinStock, bin.CurrentBinStock)
-			}
-		} else if req.ProductType == "kanban" {
-
-			if safeMaxBinQty > 0 && safePackQty > 0 {
-				totalBins := safeMaxBinQty / safePackQty
-				stmt, _ := tx.Prepare(`INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock) VALUES ($1,$2,$3,0)`)
+		if !isSpecial {
+			if len(req.Bins) > 0 {
+				stmt, _ := tx.Prepare(`INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock) VALUES ($1,$2,$3,$4)`)
 				defer stmt.Close()
-				for i := 1; i <= totalBins; i++ {
-					stmt.Exec(existingID, i, safePackQty)
+				for _, bin := range req.Bins {
+					stmt.Exec(existingID, bin.BinSequenceID, bin.MaxBinStock, bin.CurrentBinStock)
+				}
+			} else if req.ProductType == "kanban" {
+
+				if safeMaxBinQty > 0 && safePackQty > 0 {
+					totalBins := safeMaxBinQty / safePackQty
+					stmt, _ := tx.Prepare(`INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock) VALUES ($1,$2,$3,0)`)
+					defer stmt.Close()
+					for i := 1; i <= totalBins; i++ {
+						stmt.Exec(existingID, i, safePackQty)
+					}
 				}
 			}
 		}
@@ -1948,7 +2045,10 @@ func smartImportMaterial(c *gin.Context) {
 				existingID, req.MaterialCode, diff, oldQty, *req.CurrentQuantity)
 		}
 
-		if structureChanged && len(req.Bins) > 0 {
+		if isSpecial {
+			// If switched to special, delete all bins
+			tx.Exec("DELETE FROM material_bins WHERE material_id = $1", existingID)
+		} else if structureChanged && len(req.Bins) > 0 {
 			tx.Exec("DELETE FROM material_bins WHERE material_id = $1", existingID)
 			stmt, _ := tx.Prepare(`INSERT INTO material_bins (material_id, bin_sequence_id, max_bin_stock, current_bin_stock) VALUES ($1,$2,$3,$4)`)
 			defer stmt.Close()
