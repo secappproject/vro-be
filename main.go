@@ -60,8 +60,8 @@ type Vendor struct {
 
 type VendorStockUpdateRequest struct {
 	MaterialCode string `json:"materialCode"`
-	VendorStock  int    `json:"vendorStock"`
-	OpenPO       int    `json:"openPO"`
+	VendorStock  *int   `json:"vendorStock"`
+	OpenPO       *int   `json:"openPO"`
 }
 
 type Material struct {
@@ -537,9 +537,11 @@ func bulkUpdateVendorStock(c *gin.Context) {
 		}
 
 		_, errUpdate := tx.Exec(`
-            UPDATE materials 
-            SET vendor_stock = $1, open_po = $2
-            WHERE id = $3`,
+			UPDATE materials 
+			SET 
+				vendor_stock = COALESCE($1, vendor_stock), 
+				open_po = COALESCE($2, open_po)
+			WHERE id = $3`,
 			req.VendorStock, req.OpenPO, id,
 		)
 
@@ -549,26 +551,47 @@ func bulkUpdateVendorStock(c *gin.Context) {
 			return
 		}
 
-		diff := req.VendorStock - oldVendorStock
+		// diff := req.VendorStock - oldVendorStock
 
-		if diff != 0 {
-			_, errLog := tx.Exec(`
-                INSERT INTO stock_movements 
-                (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
-                VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
-				id,
-				req.MaterialCode,
-				diff,
-				oldVendorStock,
-				req.VendorStock,
-				pic,
-			)
+		// if diff != 0 {
+		// 	_, errLog := tx.Exec(`
+		//         INSERT INTO stock_movements
+		//         (material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+		//         VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
+		// 		id,
+		// 		req.MaterialCode,
+		// 		diff,
+		// 		oldVendorStock,
+		// 		req.VendorStock,
+		// 		pic,
+		// 	)
 
-			if errLog != nil {
-				log.Printf("Gagal log history untuk %s: %v", req.MaterialCode, errLog)
+		// 	if errLog != nil {
+		// 		log.Printf("Gagal log history untuk %s: %v", req.MaterialCode, errLog)
+		// 	}
+		// }
+
+		if req.VendorStock != nil {
+			newVendorStockVal := *req.VendorStock
+			diff := newVendorStockVal - oldVendorStock
+
+			if diff != 0 {
+				_, errLog := tx.Exec(`
+					INSERT INTO stock_movements 
+					(material_id, material_code, movement_type, quantity_change, old_quantity, new_quantity, pic, notes, bin_sequence_id)
+					VALUES ($1, $2, 'Edit Vendor', $3, $4, $5, $6, 'Edit Vendor Stock', NULL)`,
+					id,
+					req.MaterialCode,
+					diff,
+					oldVendorStock,
+					newVendorStockVal,
+					pic,
+				)
+				if errLog != nil {
+					log.Printf("Gagal log history untuk %s: %v", req.MaterialCode, errLog)
+				}
 			}
 		}
-
 		updatedCount++
 	}
 
