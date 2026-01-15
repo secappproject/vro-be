@@ -115,6 +115,7 @@ type StockMovement struct {
 	Notes          sql.NullString `json:"notes"`
 	BinSequenceID  sql.NullInt64  `json:"binSequenceId,omitempty"`
 	Timestamp      time.Time      `json:"timestamp"`
+	VendorCode     string         `json:"vendorCode"`
 }
 
 type DownloadLogRequest struct {
@@ -739,19 +740,18 @@ func getAllStockMovements(c *gin.Context) {
 	role := c.GetHeader("X-User-Role")
 	companyName := c.GetHeader("X-User-Company")
 
-	// Base query: Join dengan materials untuk cek akses vendor
 	query := `
         SELECT 
             sm.id, sm.material_id, sm.material_code, sm.movement_type, 
             sm.quantity_change, sm.old_quantity, sm.new_quantity, 
-            sm.pic, sm.notes, sm.timestamp, sm.bin_sequence_id
+            sm.pic, sm.notes, sm.timestamp, sm.bin_sequence_id,
+            COALESCE(m.vendor_code, '') as vendor_code
         FROM stock_movements sm
         JOIN materials m ON sm.material_id = m.id
     `
 
 	var params []any
 
-	// Filter khusus Vendor
 	if role == "Vendor" {
 		if companyName == "" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Vendor tanpa company tidak boleh akses"})
@@ -761,7 +761,6 @@ func getAllStockMovements(c *gin.Context) {
 		params = append(params, companyName)
 	}
 
-	// Urutkan dari yang terbaru
 	query += " ORDER BY sm.timestamp DESC"
 
 	rows, err := db.Query(query, params...)
@@ -778,6 +777,7 @@ func getAllStockMovements(c *gin.Context) {
 		if err := rows.Scan(
 			&m.ID, &m.MaterialID, &m.MaterialCode, &m.MovementType,
 			&m.QuantityChange, &m.OldQuantity, &m.NewQuantity, &m.PIC, &m.Notes, &m.Timestamp, &m.BinSequenceID,
+			&m.VendorCode,
 		); err != nil {
 			log.Printf("Error scanning movement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data histori"})
@@ -1421,7 +1421,6 @@ func getMaterialStatus(c *gin.Context) {
 
 	bins := make([]MaterialBin, 0)
 
-	// Jika tipe "special", bins mungkin kosong, tapi query tidak akan error, cuma return kosong.
 	binRows, err := db.Query(
 		`SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
          FROM material_bins 
@@ -1456,7 +1455,6 @@ func getMaterialStatus(c *gin.Context) {
 	if m.CurrentQuantity >= m.MaxBinQty {
 		predictedMovement = "OUT"
 	}
-	// Logic predicted movement untuk special mungkin beda, tapi logic dasar SOH >= Max (OUT) masih valid sebagai indikator
 
 	response := MaterialStatusResponse{
 		PackQuantity:      m.PackQuantity,
@@ -1490,11 +1488,13 @@ func getStockMovements(c *gin.Context) {
 	}
 
 	rows, err := db.Query(
-		`SELECT id, material_id, material_code, movement_type, 
-                quantity_change, old_quantity, new_quantity, pic, notes, timestamp, bin_sequence_id
-         FROM stock_movements 
-         WHERE material_id = $1 
-         ORDER BY timestamp DESC`,
+		`SELECT sm.id, sm.material_id, sm.material_code, sm.movement_type, 
+                sm.quantity_change, sm.old_quantity, sm.new_quantity, sm.pic, sm.notes, sm.timestamp, sm.bin_sequence_id,
+                COALESCE(m.vendor_code, '')
+         FROM stock_movements sm
+         JOIN materials m ON sm.material_id = m.id
+         WHERE sm.material_id = $1 
+         ORDER BY sm.timestamp DESC`,
 		materialID,
 	)
 	if err != nil {
@@ -1510,6 +1510,7 @@ func getStockMovements(c *gin.Context) {
 		if err := rows.Scan(
 			&m.ID, &m.MaterialID, &m.MaterialCode, &m.MovementType,
 			&m.QuantityChange, &m.OldQuantity, &m.NewQuantity, &m.PIC, &m.Notes, &m.Timestamp, &m.BinSequenceID,
+			&m.VendorCode,
 		); err != nil {
 			log.Printf("Error scanning stock movement: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai histori stok"})
