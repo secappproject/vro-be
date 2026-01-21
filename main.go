@@ -127,7 +127,6 @@ type DownloadLog struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-
 type SmartMaterialRequest struct {
 	MaterialCode        string        `json:"material" binding:"required"`
 	MaterialDescription *string       `json:"materialDescription"`
