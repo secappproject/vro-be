@@ -190,17 +190,7 @@ DELETE FROM users WHERE username != 'admin';
 -- 3. Tambah kolom sementara (nullable) dengan Tipe ENUM baru
 ALTER TABLE users ADD COLUMN role_new user_role_new;
 
-<<<<<<< HEAD
 -- 4. KOREKSI: (Bagian UPDATE dihapus karena bikin error)
-=======
--- 4. KOREKSI: Ubah username 'admin' -> 'superuser' DAN role-nya -> 'Superuser'
-UPDATE users 
-SET 
-    username = 'superuser', -- Tambahkan baris ini
-    role_new = 'Superuser' 
-WHERE 
-    username = 'admin';
->>>>>>> ceca46355de3ebb61c7cdd2e7e176d833b55cfb2
 
 -- 5. Hapus kolom 'role' yang lama (yang masih pakai ENUM lama 'user_role')
 ALTER TABLE users DROP COLUMN role;
@@ -214,31 +204,17 @@ ALTER TABLE users RENAME COLUMN role_new TO role;
 -- 8. Ubah nama Tipe ENUM baru ('user_role_new') menjadi 'user_role' (nama standar)
 ALTER TYPE user_role_new RENAME TO user_role;
 
-<<<<<<< HEAD
--- 9. Pastikan kolom 'role' sekarang NOT NULL
-ALTER TABLE users ALTER COLUMN role SET NOT NULL;
-
--- 10. Insert user-user baru sesuai permintaan 
--- 👇 DI SINI KUNCI UTAMANYA: Tambah baris superuser! 👇
-INSERT INTO users (username, password, role) VALUES 
-('superuser', 'superpass', 'Superuser'), 
-=======
 -- 9. Pastikan kolom 'role' sekarang NOT NULL (karena 'superuser' sudah diisi)
 ALTER TABLE users ALTER COLUMN role SET NOT NULL;
 
 -- 10. Insert user-user baru sesuai permintaan
 INSERT INTO users (username, password, role) VALUES 
->>>>>>> ceca46355de3ebb61c7cdd2e7e176d833b55cfb2
 ('admin', 'adminpass', 'Admin'),
 ('viewer', 'viewerpass', 'Viewer');
 
 -- (Asumsi vendor 'ABACUS' sudah ada dari data dummy sebelumnya)
 INSERT INTO users (username, password, role, company_name, vendor_type) VALUES 
 ('vendor_abacus', 'vendorpass', 'Vendor', 'ABACUS', 'Panel');
-<<<<<<< HEAD
-=======
-
->>>>>>> ceca46355de3ebb61c7cdd2e7e176d833b55cfb2
 -- Selesaikan transaksi
 COMMIT;
 
