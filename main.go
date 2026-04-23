@@ -218,8 +218,8 @@ func main() {
 			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
 			materials.GET("/:id/movements", getStockMovements)
 			materials.DELETE("/:id", SuperuserOnlyAuthMiddleware(), deleteMaterial)
-			materials.PATCH("/:id/block", SuperuserOnlyAuthMiddleware(), blockMaterial)
-			materials.PATCH("/:id/unblock", SuperuserOnlyAuthMiddleware(), unblockMaterial)
+			materials.PATCH("/:id/block", AdminOrSuperuserAuthMiddleware(), blockMaterial)
+			materials.PATCH("/:id/unblock", AdminOrSuperuserAuthMiddleware(), unblockMaterial)
 
 		}
 
