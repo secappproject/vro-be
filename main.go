@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 func mustGetEnv(key string) string {
@@ -54,6 +54,7 @@ type Vendor struct {
 	ID          int       `json:"id"`
 	CompanyName string    `json:"companyName" binding:"required"`
 	VendorType  string    `json:"vendorType" binding:"required"`
+	Email       *string   `json:"email"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -81,6 +82,12 @@ type Material struct {
 	OpenPO              int            `json:"openPO"`
 	Bins                []MaterialBin  `json:"bins,omitempty"`
 	RemarkBlock         sql.NullString `json:"remarkBlock"` //
+	AMU                 float64        `json:"amu"`
+	FMRS                string         `json:"fmrs"`
+	CoverageMonth       float64        `json:"coverageMonth"`
+	SS                  float64        `json:"ss"`
+	WarningStatus       string         `json:"warningStatus"`
+	VendorEmail         string         `json:"vendorEmail"`
 }
 
 type MaterialStatusResponse struct {
@@ -94,6 +101,8 @@ type MaterialStatusResponse struct {
 	Bins              []MaterialBin `json:"bins,omitempty"`
 	VendorStock       int           `json:"vendorStock"`
 	OpenPO            int           `json:"openPO"`
+	AMU               float64       `json:"amu"`
+	FMRS              string        `json:"fmrs"`
 }
 
 type MaterialBin struct {
@@ -142,6 +151,80 @@ type SmartMaterialRequest struct {
 }
 
 var db *sql.DB
+
+func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Material) error {
+	if vendorEmail == "" {
+		return nil
+	}
+
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpEmail := os.Getenv("SMTP_EMAIL")
+	smtpPassword := os.Getenv("SMTP_PASSWORD")
+
+	if smtpHost == "" || smtpEmail == "" || smtpPassword == "" {
+		log.Println("⚠️ SMTP not configured, skipping email")
+		return nil
+	}
+
+	auth := smtp.PlainAuth("", smtpEmail, smtpPassword, smtpHost)
+
+	subject := fmt.Sprintf("PURCHASE REQUEST - Stock Replenishment for %s", vendorCode)
+
+	var body strings.Builder
+	body.WriteString(fmt.Sprintf("Dear %s,\n\n", vendorCode))
+	body.WriteString("Based on our stock monitoring system, the following materials need immediate replenishment:\n\n")
+	body.WriteString("Material Code | Safety Stock | Vendor Stock \n")
+	body.WriteString("--------------|--------------|---------------\n")
+
+	for _, m := range criticalMaterials {
+		body.WriteString(fmt.Sprintf("%s | %.0f | %d \n",
+			m.MaterialCode, m.SS, m.VendorStock))
+	}
+
+	body.WriteString("\nPlease ship to:\n")
+	body.WriteString("PT Schneider Electric Cikarang\n\n")
+	body.WriteString("Best regards,\nSchneider Electric Cikarang")
+
+	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n\r\n%s", vendorEmail, subject, body.String())
+
+	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpEmail, []string{vendorEmail}, []byte(msg))
+	if err != nil {
+		log.Printf("❌ Failed to send email to %s: %v", vendorEmail, err)
+		return err
+	}
+
+	log.Printf("✅ Email sent to %s", vendorEmail)
+	return nil
+}
+
+// ================== EMAIL FUNCTIONS ==================
+
+func wasEmailSentToday(vendorCode, materialCode string) bool {
+	var count int
+	err := db.QueryRow(`
+        SELECT COUNT(*) FROM email_logs 
+        WHERE vendor_code = $1 AND material_code = $2 
+        AND sent_at > NOW() - INTERVAL '24 hours'
+    `, vendorCode, materialCode).Scan(&count)
+	if err != nil {
+		log.Printf("Error checking email log: %v", err)
+		return false
+	}
+	return count > 0
+}
+
+func logEmailSent(vendorCode, materialCode, status, errMsg string) {
+	_, err := db.Exec(`
+        INSERT INTO email_logs (vendor_code, material_code, status, error_message)
+        VALUES ($1, $2, $3, $4)
+    `, vendorCode, materialCode, status, errMsg)
+	if err != nil {
+		log.Printf("Failed to log email: %v", err)
+	}
+}
+
+// ================== END EMAIL FUNCTIONS ==================
 
 func main() {
 
@@ -213,7 +296,7 @@ func main() {
 			materials.POST("/scan/auto", ScanAuthMiddleware(), scanAutoMaterials)
 			materials.POST("/smart-import", SuperuserOnlyAuthMiddleware(), smartImportMaterial)
 			materials.POST("/bulk-stock", MaterialEditAuthMiddleware(), bulkUpdateVendorStock)
-
+			materials.POST("/bulk-parameters", bulkUpdateParameters)
 			materials.POST("/", SuperuserOnlyAuthMiddleware(), createMaterial)
 			materials.PUT("/:id", MaterialEditAuthMiddleware(), updateMaterial)
 			materials.GET("/:id/movements", getStockMovements)
@@ -656,7 +739,7 @@ func getVendorTypes(c *gin.Context) {
 }
 
 func getVendors(c *gin.Context) {
-	rows, err := db.Query("SELECT id, company_name, vendor_type, created_at, updated_at FROM vendors ORDER BY company_name")
+	rows, err := db.Query("SELECT id, company_name, vendor_type, email, created_at, updated_at FROM vendors ORDER BY company_name")
 	if err != nil {
 		log.Printf("Error querying vendors: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data vendor"})
@@ -667,7 +750,7 @@ func getVendors(c *gin.Context) {
 	vendors := make([]Vendor, 0)
 	for rows.Next() {
 		var v Vendor
-		if err := rows.Scan(&v.ID, &v.CompanyName, &v.VendorType, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.CompanyName, &v.VendorType, &v.Email, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			log.Printf("Error scanning vendor: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memindai data vendor"})
 			return
@@ -686,10 +769,10 @@ func createVendor(c *gin.Context) {
 	}
 
 	err := db.QueryRow(
-		`INSERT INTO vendors (company_name, vendor_type)
-         VALUES ($1, $2)
+		`INSERT INTO vendors (company_name, vendor_type, email)
+         VALUES ($1, $2, $3)
          RETURNING id, created_at, updated_at`,
-		v.CompanyName, v.VendorType,
+		v.CompanyName, v.VendorType, v.Email, // v.Email udah sql.NullString
 	).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
 
 	if err != nil {
@@ -710,9 +793,9 @@ func updateVendor(c *gin.Context) {
 	}
 
 	_, err := db.Exec(
-		`UPDATE vendors SET company_name=$1, vendor_type=$2, updated_at=NOW()
-         WHERE id=$3`,
-		v.CompanyName, v.VendorType, id,
+		`UPDATE vendors SET company_name=$1, vendor_type=$2, email=$3, updated_at=NOW()
+         WHERE id=$4`,
+		v.CompanyName, v.VendorType, v.Email, id,
 	)
 	if err != nil {
 		log.Printf("Error updating vendor: %v", err)
@@ -794,12 +877,17 @@ func getMaterials(c *gin.Context) {
 	companyName := c.GetHeader("X-User-Company")
 
 	query := `
-        SELECT id, material_code, material_description, location,
-               pack_quantity, max_bin_qty, min_bin_qty,
-               vendor_code, current_quantity, product_type,
-               vendor_stock, open_po, remark_block
-        FROM materials
-    `
+		SELECT 
+			m.id, m.material_code, m.material_description, m.location,
+			m.pack_quantity, m.max_bin_qty, m.min_bin_qty,
+			m.vendor_code, m.current_quantity, m.product_type,
+			m.vendor_stock, m.open_po, m.remark_block,
+			COALESCE(m.amu, 0) as amu, 
+			COALESCE(m.fmrs, '') as fmrs,
+			COALESCE(v.email, '') as vendor_email
+		FROM materials m
+		LEFT JOIN vendors v ON m.vendor_code = v.company_name
+	`
 
 	var params []any
 
@@ -808,17 +896,16 @@ func getMaterials(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Vendor tanpa company tidak boleh akses"})
 			return
 		}
-		query += " WHERE vendor_code = $1 ORDER BY material_code"
+		query += " WHERE m.vendor_code = $1 ORDER BY m.material_code"
 		params = append(params, companyName)
 	} else {
-		query += " ORDER BY material_code"
+		query += " ORDER BY m.material_code"
 	}
 
 	rows, err := db.Query(query, params...)
 	if err != nil {
-		log.Println("💥 ERROR DATABASE ASLI:", err)
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal query materials"})
+		log.Println("💥 ERROR QUERY:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal query materials: " + err.Error()})
 		return
 	}
 	defer rows.Close()
@@ -829,21 +916,53 @@ func getMaterials(c *gin.Context) {
 
 	for rows.Next() {
 		var m Material
-		if err := rows.Scan(
+		err := rows.Scan(
 			&m.ID, &m.MaterialCode, &m.MaterialDescription, &m.Location,
 			&m.PackQuantity, &m.MaxBinQty, &m.MinBinQty,
 			&m.VendorCode, &m.CurrentQuantity, &m.ProductType,
 			&m.VendorStock, &m.OpenPO, &m.RemarkBlock,
-		); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal scan material"})
+			&m.AMU, &m.FMRS, &m.VendorEmail,
+		)
+		if err != nil {
+			log.Println("💥 ERROR SCAN:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal scan material: " + err.Error()})
 			return
 		}
+
+		// ========== KALKULASI COVERAGE MONTH & WARNING STATUS ==========
+		var coverageMonth float64 = 1 // default
+		switch m.FMRS {
+		case "F", "M":
+			coverageMonth = 2
+		case "R":
+			coverageMonth = 3
+		case "S":
+			coverageMonth = 0
+		default:
+			coverageMonth = 1
+		}
+		m.CoverageMonth = coverageMonth
+
+		m.SS = m.AMU * coverageMonth
+
+		if coverageMonth == 0 {
+			m.WarningStatus = "safe"
+		} else if float64(m.VendorStock) < m.SS {
+			m.WarningStatus = "critical"
+		} else if float64(m.VendorStock) < m.SS*1.5 {
+			m.WarningStatus = "warning"
+		} else {
+			m.WarningStatus = "safe"
+		}
+
+		// ========== END KALKULASI ==========
 
 		materials = append(materials, m)
 		materialMap[m.ID] = len(materials) - 1
 		materialIDs = append(materialIDs, m.ID)
 	}
 
+	// Ambil bins
 	if len(materialIDs) > 0 {
 		binRows, err := db.Query(`
             SELECT id, material_id, bin_sequence_id, max_bin_stock, current_bin_stock
@@ -851,28 +970,46 @@ func getMaterials(c *gin.Context) {
             WHERE material_id = ANY($1)
             ORDER BY material_id, bin_sequence_id
         `, pq.Array(materialIDs))
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal ambil bins"})
-			return
-		}
-		defer binRows.Close()
-
-		for binRows.Next() {
-			var b MaterialBin
-			if err := binRows.Scan(
-				&b.ID, &b.MaterialID, &b.BinSequenceID,
-				&b.MaxBinStock, &b.CurrentBinStock,
-			); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal scan bin"})
-				return
+		if err == nil {
+			defer binRows.Close()
+			for binRows.Next() {
+				var b MaterialBin
+				if err := binRows.Scan(&b.ID, &b.MaterialID, &b.BinSequenceID, &b.MaxBinStock, &b.CurrentBinStock); err == nil {
+					if idx, ok := materialMap[b.MaterialID]; ok {
+						materials[idx].Bins = append(materials[idx].Bins, b)
+					}
+				}
 			}
-
-			idx := materialMap[b.MaterialID]
-			materials[idx].Bins = append(materials[idx].Bins, b)
+		}
+	}
+	vendorCriticalMap := make(map[string][]Material)
+	for _, m := range materials {
+		if m.WarningStatus == "critical" && m.VendorEmail != "" {
+			// CEK APAKAH UDAH DIKIRIM 24 JAM TERAKHIR
+			if !wasEmailSentToday(m.VendorCode, m.MaterialCode) {
+				vendorCriticalMap[m.VendorCode] = append(vendorCriticalMap[m.VendorCode], m)
+			}
 		}
 	}
 
+	for vendorCode, criticalMats := range vendorCriticalMap {
+		go func(vc string, mats []Material) {
+			var vendorEmail string
+			db.QueryRow("SELECT email FROM vendors WHERE company_name = $1", vc).Scan(&vendorEmail)
+			if vendorEmail != "" {
+				err := sendVendorAlert(vendorEmail, vc, mats)
+				status := "sent"
+				errMsg := ""
+				if err != nil {
+					status = "failed"
+					errMsg = err.Error()
+				}
+				for _, m := range mats {
+					logEmailSent(vc, m.MaterialCode, status, errMsg)
+				}
+			}
+		}(vendorCode, criticalMats)
+	}
 	c.JSON(http.StatusOK, materials)
 }
 
@@ -996,13 +1133,13 @@ func createMaterial(c *gin.Context) {
             material_code, material_description, location,
             pack_quantity, max_bin_qty, min_bin_qty,
             vendor_code, current_quantity, product_type,
-            vendor_stock, open_po
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            vendor_stock, open_po, amu, fmrs
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         RETURNING id`,
 		m.MaterialCode, m.MaterialDescription, m.Location,
 		m.PackQuantity, m.MaxBinQty, m.MinBinQty,
 		m.VendorCode, m.CurrentQuantity, m.ProductType,
-		m.VendorStock, m.OpenPO,
+		m.VendorStock, m.OpenPO, m.AMU, m.FMRS,
 	).Scan(&m.ID)
 
 	if err != nil {
@@ -1116,7 +1253,7 @@ func scanAutoMaterials(c *gin.Context) {
 		err := tx.QueryRow(`
             SELECT id, pack_quantity, max_bin_qty, current_quantity,
                    min_bin_qty, product_type, vendor_stock,
-                   vendor_code, open_po
+                   vendor_code, open_po, amu, fmrs
             FROM materials
             WHERE material_code ILIKE $1
             FOR UPDATE`,
@@ -1124,7 +1261,7 @@ func scanAutoMaterials(c *gin.Context) {
 		).Scan(
 			&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.CurrentQuantity,
 			&m.MinBinQty, &m.ProductType, &m.VendorStock,
-			&m.VendorCode, &m.OpenPO,
+			&m.VendorCode, &m.OpenPO, &m.AMU, &m.FMRS,
 		)
 
 		if err != nil {
@@ -1412,14 +1549,14 @@ func getMaterialStatus(c *gin.Context) {
 
 	err := db.QueryRow(
 		`SELECT id, pack_quantity, max_bin_qty, min_bin_qty, 
-                current_quantity, product_type, vendor_stock, open_po
+                current_quantity, product_type, vendor_stock, open_po, amu, fmrs
          FROM materials 
          WHERE material_code ILIKE $1`,
 		materialCode,
 	).Scan(
 		&m.ID, &m.PackQuantity, &m.MaxBinQty, &m.MinBinQty,
 		&m.CurrentQuantity, &m.ProductType,
-		&m.VendorStock, &m.OpenPO,
+		&m.VendorStock, &m.OpenPO, &m.AMU, &m.FMRS,
 	)
 
 	if err != nil {
@@ -1480,6 +1617,8 @@ func getMaterialStatus(c *gin.Context) {
 		Bins:              bins,
 		VendorStock:       m.VendorStock,
 		OpenPO:            m.OpenPO,
+		AMU:               m.AMU,
+		FMRS:              m.FMRS,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -1872,6 +2011,67 @@ func getLastDownload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, logEntry)
+}
+
+// 3a. Struct untuk menangkap JSON dari frontend
+type ParameterPayload struct {
+	MaterialCode string   `json:"materialCode"`
+	AMU          *float64 `json:"amu"`
+	FMRS         *string  `json:"fmrs"`
+}
+
+// 3b. Fungsi Handler-nya
+func bulkUpdateParameters(c *gin.Context) {
+	var payloads []ParameterPayload
+
+	// Tangkap data JSON dari Frontend
+	if err := c.ShouldBindJSON(&payloads); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON tidak valid: " + err.Error()})
+		return
+	}
+
+	updatedCount := 0
+	var errorsList []string
+
+	// Mulai transaksi database
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi database"})
+		return
+	}
+
+	// Query update. COALESCE dipakai agar kalau nilainya 'undefined' dari FE, data lama tidak terhapus
+	stmt, err := tx.Prepare("UPDATE materials SET amu = COALESCE($1, amu), fmrs = COALESCE($2, fmrs) WHERE material_code = $3")
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan query"})
+		return
+	}
+	defer stmt.Close()
+
+	// Looping data Excel yang dikirim FE
+	for _, p := range payloads {
+		res, err := stmt.Exec(p.AMU, p.FMRS, p.MaterialCode)
+		if err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("Gagal update %s: %v", p.MaterialCode, err))
+			continue
+		}
+
+		rows, _ := res.RowsAffected()
+		if rows > 0 {
+			updatedCount++
+		}
+	}
+
+	// Simpan ke database
+	tx.Commit()
+
+	// Kirim balikan JSON sukses ke Frontend
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Proses selesai",
+		"updatedCount": updatedCount,
+		"errors":       errorsList,
+	})
 }
 
 func smartImportMaterial(c *gin.Context) {
