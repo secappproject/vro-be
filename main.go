@@ -171,22 +171,71 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
 
 	subject := fmt.Sprintf("PURCHASE REQUEST - Stock Replenishment for %s", vendorCode)
 
-	var body strings.Builder
-	body.WriteString(fmt.Sprintf("Dear %s,\n\n", vendorCode))
-	body.WriteString("Based on our stock monitoring system, the following materials need immediate replenishment:\n\n")
-	body.WriteString("Material Code | Safety Stock | Vendor Stock \n")
-	body.WriteString("--------------|--------------|---------------\n")
+	// 1. Tambahkan header MIME ini agar email dibaca sebagai HTML, bukan teks biasa
+	headers := "MIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n"
 
+	// 2. Looping data material untuk dimasukkan ke dalam baris tabel HTML (<tr><td>)
+	var tableRows strings.Builder
 	for _, m := range criticalMaterials {
-		body.WriteString(fmt.Sprintf("%s | %.0f | %d \n",
+		tableRows.WriteString(fmt.Sprintf(`
+			<tr>
+				<td style='padding: 10px 8px; border-bottom: 1px solid #e5e7eb; color: #374151;'><b>%s</b></td>
+				<td style='padding: 10px 8px; border-bottom: 1px solid #e5e7eb; color: #374151;'>%.0f</td>
+				<td style='padding: 10px 8px; border-bottom: 1px solid #e5e7eb; color: #ef4444; font-weight: bold;'>%d</td>
+			</tr>`,
 			m.MaterialCode, m.SS, m.VendorStock))
 	}
 
-	body.WriteString("\nPlease ship to:\n")
-	body.WriteString("PT Schneider Electric Cikarang\n\n")
-	body.WriteString("Best regards,\nSchneider Electric Cikarang")
+	// 3. Template Body HTML (Desain mirip seperti screenshot panel isu)
+	htmlBody := fmt.Sprintf(`
+	<!DOCTYPE html>
+	<html>
+	<head>
+		<meta charset="UTF-8">
+	</head>
+	<body style="font-family: Arial, sans-serif; background-color: #f3f4f6; padding: 20px; margin: 0;">
+		<div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e5e7eb;">
+			
+			<h2 style="color: #16a34a; font-size: 22px; font-weight: bold; border-bottom: 2px solid #16a34a; padding-bottom: 10px; margin-top: 0;">
+				Purchase Request
+			</h2>
+			
+			<p style="color: #374151; font-size: 14px; line-height: 1.6;">
+				Dear <b>%s</b>,<br><br>
+				Based on our stock monitoring system, the following materials need immediate replenishment:
+			</p>
 
-	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n\r\n%s", vendorEmail, subject, body.String())
+			<div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 15px; border-radius: 6px; margin: 20px 0;">
+				<table style="width: 100%%; border-collapse: collapse; font-size: 14px;">
+					<thead>
+						<tr>
+							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Material Code</th>
+							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Safety Stock</th>
+							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Vendor Stock</th>
+						</tr>
+					</thead>
+					<tbody>
+						%s
+					</tbody>
+				</table>
+			</div>
+
+			<p style="color: #374151; font-size: 14px; line-height: 1.6;">
+				<b>Please ship to:</b><br>
+				PT Schneider Electric Cikarang
+			</p>
+
+			<div style="margin-top: 30px; font-size: 12px; color: #9ca3af; font-style: italic; border-top: 1px solid #e5e7eb; padding-top: 15px;">
+				Email ini dikirim secara otomatis oleh sistem pemantauan stok.
+			</div>
+			
+		</div>
+	</body>
+	</html>
+	`, vendorCode, tableRows.String())
+
+	// 4. Gabungkan header HTML dan Body HTML menjadi satu pesan utuh
+	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n%s\r\n%s", vendorEmail, subject, headers, htmlBody)
 
 	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpEmail, []string{vendorEmail}, []byte(msg))
 	if err != nil {
