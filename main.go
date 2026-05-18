@@ -171,10 +171,9 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
 
 	subject := fmt.Sprintf("PURCHASE REQUEST - Stock Replenishment for %s", vendorCode)
 
-	// 1. Tambahkan header MIME ini agar email dibaca sebagai HTML, bukan teks biasa
+
 	headers := "MIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n"
 
-	// 2. Looping data material untuk dimasukkan ke dalam baris tabel HTML (<tr><td>)
 	var tableRows strings.Builder
 	for _, m := range criticalMaterials {
 		tableRows.WriteString(fmt.Sprintf(`
@@ -186,7 +185,6 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
 			m.MaterialCode, m.SS, m.VendorStock))
 	}
 
-	// 3. Template Body HTML (Desain mirip seperti screenshot panel isu)
 	htmlBody := fmt.Sprintf(`
     <!DOCTYPE html>
     <html>
@@ -234,7 +232,6 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
     </html>
     `, vendorCode, tableRows.String())
 
-	// 4. Gabungkan header HTML dan Body HTML menjadi satu pesan utuh
 	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n%s\r\n%s", vendorEmail, subject, headers, htmlBody)
 
 	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpEmail, []string{vendorEmail}, []byte(msg))
@@ -1534,11 +1531,9 @@ func scanAutoMaterials(c *gin.Context) {
 func blockMaterial(c *gin.Context) {
 	id := c.Param("id")
 
-	// 1. Tangkap alasan (RemarkBlock) yang dikirim dari frontend (Modal)
 	var reqBody struct {
 		RemarkBlock string `json:"remarkBlock"`
 	}
-	// Kita baca body request-nya. Kalau ada error/kosong, ya biarin aja.
 	c.ShouldBindJSON(&reqBody)
 
 	var currentType string
@@ -1553,7 +1548,6 @@ func blockMaterial(c *gin.Context) {
 		return
 	}
 
-	// 2. Simpan alasan (RemarkBlock) ke dalam database sekalian ngubah status jadi block
 	_, err = db.Exec(`
         UPDATE materials 
         SET previous_product_type = product_type, 
@@ -1572,7 +1566,6 @@ func blockMaterial(c *gin.Context) {
 func unblockMaterial(c *gin.Context) {
 	id := c.Param("id")
 
-	// Kalau di-unblock, alasannya wajib kita kosongin lagi (remark_block = NULL)
 	_, err := db.Exec(`
         UPDATE materials 
         SET product_type = COALESCE(previous_product_type, 'kanban'), 
@@ -2062,18 +2055,15 @@ func getLastDownload(c *gin.Context) {
 	c.JSON(http.StatusOK, logEntry)
 }
 
-// 3a. Struct untuk menangkap JSON dari frontend
 type ParameterPayload struct {
 	MaterialCode string   `json:"materialCode"`
 	AMU          *float64 `json:"amu"`
 	FMRS         *string  `json:"fmrs"`
 }
 
-// 3b. Fungsi Handler-nya
 func bulkUpdateParameters(c *gin.Context) {
 	var payloads []ParameterPayload
 
-	// Tangkap data JSON dari Frontend
 	if err := c.ShouldBindJSON(&payloads); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON tidak valid: " + err.Error()})
 		return
@@ -2082,14 +2072,12 @@ func bulkUpdateParameters(c *gin.Context) {
 	updatedCount := 0
 	var errorsList []string
 
-	// Mulai transaksi database
 	tx, err := db.Begin()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi database"})
 		return
 	}
 
-	// Query update. COALESCE dipakai agar kalau nilainya 'undefined' dari FE, data lama tidak terhapus
 	stmt, err := tx.Prepare("UPDATE materials SET amu = COALESCE($1, amu), fmrs = COALESCE($2, fmrs) WHERE material_code = $3")
 	if err != nil {
 		tx.Rollback()
@@ -2098,7 +2086,6 @@ func bulkUpdateParameters(c *gin.Context) {
 	}
 	defer stmt.Close()
 
-	// Looping data Excel yang dikirim FE
 	for _, p := range payloads {
 		res, err := stmt.Exec(p.AMU, p.FMRS, p.MaterialCode)
 		if err != nil {
@@ -2112,10 +2099,8 @@ func bulkUpdateParameters(c *gin.Context) {
 		}
 	}
 
-	// Simpan ke database
 	tx.Commit()
 
-	// Kirim balikan JSON sukses ke Frontend
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Proses selesai",
 		"updatedCount": updatedCount,
