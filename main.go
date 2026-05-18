@@ -202,7 +202,7 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
             
             <p style="color: #374151; font-size: 14px; line-height: 1.6;">
                 Dear <b>%s</b>,<br><br>
-                Jika Anda menerima email alert per hari ini, hal tersebut menandakan bahwa jumlah vendor stock saat ini tercatat tidak mencukupi (<i>cannot cover</i>) untuk kebutuhan beberapa bulan ke depan di SEC.
+                Jumlah vendor stock saat ini tercatat tidak mencukupi (<i>cannot cover</i>) untuk kebutuhan beberapa bulan ke depan di SEC.
             </p>
 
             <div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 15px; border-radius: 6px; margin: 20px 0;">
