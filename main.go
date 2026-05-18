@@ -188,51 +188,51 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
 
 	// 3. Template Body HTML (Desain mirip seperti screenshot panel isu)
 	htmlBody := fmt.Sprintf(`
-	<!DOCTYPE html>
-	<html>
-	<head>
-		<meta charset="UTF-8">
-	</head>
-	<body style="font-family: Arial, sans-serif; background-color: #f3f4f6; padding: 20px; margin: 0;">
-		<div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e5e7eb;">
-			
-			<h2 style="color: #16a34a; font-size: 22px; font-weight: bold; border-bottom: 2px solid #16a34a; padding-bottom: 10px; margin-top: 0;">
-				Purchase Request
-			</h2>
-			
-			<p style="color: #374151; font-size: 14px; line-height: 1.6;">
-				Dear <b>%s</b>,<br><br>
-				Based on our stock monitoring system, the following materials need immediate replenishment:
-			</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+    </head>
+    <body style="font-family: Arial, sans-serif; background-color: #f3f4f6; padding: 20px; margin: 0;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e5e7eb;">
+            
+            <h2 style="color: #16a34a; font-size: 22px; font-weight: bold; border-bottom: 2px solid #16a34a; padding-bottom: 10px; margin-top: 0;">
+                Vendor Stock Alert
+            </h2>
+            
+            <p style="color: #374151; font-size: 14px; line-height: 1.6;">
+                Dear <b>%s</b>,<br><br>
+                Jika Anda menerima email alert per hari ini, hal tersebut menandakan bahwa jumlah vendor stock saat ini tercatat tidak mencukupi (<i>cannot cover</i>) untuk kebutuhan beberapa bulan ke depan di SEC.
+            </p>
 
-			<div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 15px; border-radius: 6px; margin: 20px 0;">
-				<table style="width: 100%%; border-collapse: collapse; font-size: 14px;">
-					<thead>
-						<tr>
-							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Material Code</th>
-							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Safety Stock</th>
-							<th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Vendor Stock</th>
-						</tr>
-					</thead>
-					<tbody>
-						%s
-					</tbody>
-				</table>
-			</div>
+            <div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                <table style="width: 100%%; border-collapse: collapse; font-size: 14px;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Material Code</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Safety Stock</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Vendor Stock</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        %s
+                    </tbody>
+                </table>
+            </div>
 
-			<p style="color: #374151; font-size: 14px; line-height: 1.6;">
-				<b>Please ship to:</b><br>
-				PT Schneider Electric Cikarang
-			</p>
+            <p style="color: #374151; font-size: 14px; line-height: 1.6;">
+                Apabila jumlah vendor stock yang tertera saat ini tidak sesuai dengan jumlah aktual, mohon untuk segera melakukan update.<br><br>
+                Terima kasih.
+            </p>
 
-			<div style="margin-top: 30px; font-size: 12px; color: #9ca3af; font-style: italic; border-top: 1px solid #e5e7eb; padding-top: 15px;">
-				Email ini dikirim secara otomatis oleh sistem pemantauan stok.
-			</div>
-			
-		</div>
-	</body>
-	</html>
-	`, vendorCode, tableRows.String())
+            <div style="margin-top: 30px; font-size: 12px; color: #9ca3af; font-style: italic; border-top: 1px solid #e5e7eb; padding-top: 15px;">
+                Email ini dikirim secara otomatis oleh sistem pemantauan stok.
+            </div>
+            
+        </div>
+    </body>
+    </html>
+    `, vendorCode, tableRows.String())
 
 	// 4. Gabungkan header HTML dan Body HTML menjadi satu pesan utuh
 	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n%s\r\n%s", vendorEmail, subject, headers, htmlBody)
