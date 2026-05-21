@@ -167,10 +167,23 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
 		return nil
 	}
 
+	rawEmails := strings.Split(vendorEmail, ";")
+	var recipients []string
+
+	for _, e := range rawEmails {
+		cleanEmail := strings.TrimSpace(e)
+		if cleanEmail != "" {
+			recipients = append(recipients, cleanEmail)
+		}
+	}
+
+	if len(recipients) == 0 {
+		return nil
+	}
+
 	auth := smtp.PlainAuth("", smtpEmail, smtpPassword, smtpHost)
 
-	subject := fmt.Sprintf("PURCHASE REQUEST - Stock Replenishment for %s", vendorCode)
-
+	subject := fmt.Sprintf("Vendor stock - Alert for %s", vendorCode)
 
 	headers := "MIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n"
 
@@ -208,7 +221,7 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
                     <thead>
                         <tr>
                             <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Material Code</th>
-                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Safety Stock</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Vendor SS Qty</th>
                             <th style="text-align: left; padding: 8px; border-bottom: 2px solid #d1d5db; color: #4b5563;">Vendor Stock</th>
                         </tr>
                     </thead>
@@ -232,9 +245,10 @@ func sendVendorAlert(vendorEmail, vendorCode string, criticalMaterials []Materia
     </html>
     `, vendorCode, tableRows.String())
 
-	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n%s\r\n%s", vendorEmail, subject, headers, htmlBody)
+	toHeader := strings.Join(recipients, ", ")
+	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\n%s\r\n%s", toHeader, subject, headers, htmlBody)
 
-	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpEmail, []string{vendorEmail}, []byte(msg))
+	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpEmail, recipients, []byte(msg))
 	if err != nil {
 		log.Printf("❌ Failed to send email to %s: %v", vendorEmail, err)
 		return err
